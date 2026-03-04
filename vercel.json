@@ -1,4 +1,4 @@
-{
+﻿{
   "rewrites": [
     { "source": "/admin/ui", "destination": "/api/router" },
     { "source": "/admin/(.*)", "destination": "/api/router" },
@@ -6,3 +6,4 @@
     { "source": "/.well-known/jwks.json", "destination": "/api/router" }
   ]
 }
+

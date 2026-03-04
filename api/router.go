@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
   "context"
@@ -1128,3 +1128,4 @@ func contains(list []string, value string) bool {
   }
   return false
 }
+
