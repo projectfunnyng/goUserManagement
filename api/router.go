@@ -25,7 +25,7 @@ import (
   "github.com/jackc/pgx/v5/pgtype"
 )
 
-//go:embed ../admin-ui.html
+//go:embed admin-ui.html
 var uiFS embed.FS
 
 var (
@@ -150,7 +150,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveUI(w http.ResponseWriter) {
-  data, err := uiFS.ReadFile("../admin-ui.html")
+  data, err := uiFS.ReadFile("admin-ui.html")
   if err != nil {
     http.Error(w, "UI not found", http.StatusInternalServerError)
     return
