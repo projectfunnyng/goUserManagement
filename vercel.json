@@ -1,9 +1,4 @@
 {
-  "functions": {
-    "api/router.go": {
-      "runtime": "go1.x"
-    }
-  },
   "rewrites": [
     { "source": "/admin/ui", "destination": "/api/router" },
     { "source": "/admin/(.*)", "destination": "/api/router" },
