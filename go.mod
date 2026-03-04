@@ -1,4 +1,4 @@
-﻿module usermanagement
+module usermanagement
 
 go 1.21
 
