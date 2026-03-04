@@ -1092,11 +1092,11 @@ func toStringSlice(value any) []string {
     }
     return out
   case string:
-    parts := strings.Split(v, \",\")
+    parts := strings.Split(v, ",")
     out := make([]string, 0, len(parts))
     for _, p := range parts {
       s := strings.TrimSpace(p)
-      if s != \"\" {
+      if s != "" {
         out = append(out, s)
       }
     }
@@ -1128,4 +1128,5 @@ func contains(list []string, value string) bool {
   }
   return false
 }
+
 
