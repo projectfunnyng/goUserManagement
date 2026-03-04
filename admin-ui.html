@@ -1,0 +1,509 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>User Management Admin</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fb; color: #1f2937; }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+    .row { display: flex; gap: 8px; }
+    .row > * { flex: 1; }
+    label { display: block; font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+    input, textarea, select { width: 100%; padding: 6px; border: 1px solid #d1d5db; border-radius: 6px; }
+    button { padding: 8px 10px; border: none; border-radius: 6px; background: #2563eb; color: #fff; cursor: pointer; }
+    button.secondary { background: #6b7280; }
+    button.danger { background: #dc2626; }
+    .list { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; background: #fafafa; max-height: 320px; overflow: auto; }
+    .item { padding: 6px; border-bottom: 1px solid #e5e7eb; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .item:last-child { border-bottom: none; }
+    .item.selected { background: #e5e7eb; }
+    .muted { color: #6b7280; font-size: 12px; }
+    .inline-actions { display: flex; gap: 6px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card" id="loginCard">
+      <h2>Admin Sign In</h2>
+      <div class="row">
+        <div>
+          <label>Client ID</label>
+          <input id="clientId" />
+        </div>
+        <div>
+          <label>Client Secret</label>
+          <input id="clientSecret" type="password" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Email</label>
+          <input id="email" />
+        </div>
+        <div>
+          <label>Password</label>
+          <input id="password" type="password" />
+        </div>
+        <div>
+          <label>Scope</label>
+          <input id="scope" value="superAdmin" />
+        </div>
+      </div>
+      <div style="margin-top:8px; display:flex; gap:8px;">
+        <button id="loginBtn">Sign In</button>
+        <button id="logoutBtn" class="secondary">Sign Out</button>
+        <button id="refreshBtn" class="secondary">Refresh</button>
+        <div class="muted" id="authStatus">Not signed in</div>
+      </div>
+      <div class="muted" id="loginError"></div>
+    </div>
+
+    <div class="card">
+      <h3>Users</h3>
+      <label>Search</label>
+      <input id="userSearch" placeholder="email, name, status" />
+      <div class="row" style="margin-top:8px;">
+        <div>
+          <label>Email</label>
+          <input id="uEmail" />
+        </div>
+        <div>
+          <label>First Name</label>
+          <input id="uFirst" />
+        </div>
+        <div>
+          <label>Last Name</label>
+          <input id="uLast" />
+        </div>
+        <div>
+          <label>Password</label>
+          <input id="uPass" type="password" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Status</label>
+          <select id="uStatus">
+            <option value="invited">invited</option>
+            <option value="active">active</option>
+            <option value="suspended">suspended</option>
+            <option value="locked">locked</option>
+            <option value="deleted">deleted</option>
+          </select>
+        </div>
+        <div>
+          <label>Org ID (superAdmin)</label>
+          <input id="uOrg" />
+        </div>
+        <div style="display:flex; align-items:flex-end; gap:6px;">
+          <button id="createUserBtn">Create</button>
+          <button id="updateUserBtn" class="secondary">Update</button>
+          <button id="deleteUserBtn" class="danger">Delete</button>
+        </div>
+      </div>
+      <div class="list" id="usersList"></div>
+    </div>
+
+    <div class="card">
+      <h3>Applications</h3>
+      <label>Search</label>
+      <input id="appSearch" placeholder="name, type" />
+      <div class="row" style="margin-top:8px;">
+        <div>
+          <label>Name</label>
+          <input id="aName" />
+        </div>
+        <div>
+          <label>Type</label>
+          <select id="aType">
+            <option value="internal">internal</option>
+            <option value="public">public</option>
+            <option value="confidential">confidential</option>
+          </select>
+        </div>
+        <div>
+          <label>Enabled</label>
+          <select id="aEnabled">
+            <option value="true">true</option>
+            <option value="false">false</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Redirect URIs (comma)</label>
+          <input id="aRedirects" />
+        </div>
+        <div>
+          <label>Grants (comma)</label>
+          <input id="aGrants" />
+        </div>
+        <div>
+          <label>Scopes (comma)</label>
+          <input id="aScopes" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Org ID (superAdmin)</label>
+          <input id="aOrg" />
+        </div>
+        <div>
+          <label>Client ID</label>
+          <input id="aClientId" readonly />
+        </div>
+        <div>
+          <label>Client Secret (once)</label>
+          <input id="aClientSecret" readonly />
+        </div>
+      </div>
+      <div class="row">
+        <div style="display:flex; align-items:flex-end; gap:6px;">
+          <button id="createAppBtn">Create</button>
+          <button id="updateAppBtn" class="secondary">Update</button>
+          <button id="deleteAppBtn" class="danger">Delete</button>
+        </div>
+      </div>
+      <div class="list" id="appsList"></div>
+    </div>
+
+    <div class="card" id="adminsCard">
+      <h3>Admin Users (superAdmin only)</h3>
+      <div class="row">
+        <div>
+          <label>Email</label>
+          <input id="adminEmail" />
+        </div>
+        <div style="display:flex; align-items:flex-end;">
+          <button id="addAdminBtn">Add Admin</button>
+        </div>
+      </div>
+      <div class="list" id="adminsList"></div>
+    </div>
+
+    <div class="card" id="orgsCard">
+      <h3>Organizations (superAdmin only)</h3>
+      <div class="row">
+        <div>
+          <label>Organization Name</label>
+          <input id="orgName" />
+        </div>
+        <div style="display:flex; align-items:flex-end; gap:6px;">
+          <button id="addOrgBtn">Add Org</button>
+          <button id="updateOrgBtn" class="secondary">Update Org</button>
+          <button id="deleteOrgBtn" class="danger">Delete Org</button>
+        </div>
+      </div>
+      <div class="list" id="orgsList"></div>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      token: "",
+      scopes: [],
+      isSuperAdmin: false,
+      users: [],
+      apps: [],
+      admins: [],
+      orgs: [],
+      selectedUserId: "",
+      selectedAppId: "",
+      selectedOrgId: "",
+      userSearch: "",
+      appSearch: ""
+    };
+
+    function getToken() { return localStorage.getItem("admin_token") || ""; }
+    function setToken(t) { if (!t) localStorage.removeItem("admin_token"); else localStorage.setItem("admin_token", t); }
+
+    function decodeJwtPayload(token) {
+      try {
+        const base64 = token.split(".")[1];
+        if (!base64) return null;
+        const normalized = base64.replace(/-/g, "+").replace(/_/g, "/");
+        return JSON.parse(atob(normalized));
+      } catch {
+        return null;
+      }
+    }
+
+    function applyScopes(token) {
+      const payload = decodeJwtPayload(token);
+      const rawScope = payload && (payload.scope ?? payload.scp) ? (payload.scope ?? payload.scp) : "";
+      const scopes = Array.isArray(rawScope)
+        ? rawScope.map((s) => String(s).toLowerCase())
+        : String(rawScope || "").split(/\s+/).map((s) => s.toLowerCase()).filter(Boolean);
+      state.scopes = scopes;
+      state.isSuperAdmin = scopes.includes("superadmin");
+      document.getElementById("adminsCard").style.display = state.isSuperAdmin ? "block" : "none";
+      document.getElementById("orgsCard").style.display = state.isSuperAdmin ? "block" : "none";
+    }
+
+    async function api(path, options) {
+      const headers = { "Content-Type": "application/json" };
+      const token = getToken();
+      if (token) headers.Authorization = "Bearer " + token;
+      const res = await fetch(path, { ...options, headers });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+      if (!res.ok) throw new Error((data && data.message) || (data && data.error_description) || text || res.status);
+      return data;
+    }
+
+    async function login() {
+      document.getElementById("loginError").textContent = "";
+      const body = {
+        grant_type: "password",
+        client_id: document.getElementById("clientId").value.trim(),
+        client_secret: document.getElementById("clientSecret").value.trim(),
+        username: document.getElementById("email").value.trim(),
+        password: document.getElementById("password").value,
+        scope: document.getElementById("scope").value.trim()
+      };
+      try {
+        const res = await fetch("/oauth/token", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error_description || data.message || "Login failed");
+        const token = data.access_token || "";
+        setToken(token);
+        applyScopes(token);
+        document.getElementById("authStatus").textContent = "Signed in";
+        await refreshAll();
+      } catch (e) {
+        document.getElementById("loginError").textContent = String(e);
+      }
+    }
+
+    function logout() {
+      setToken("");
+      document.getElementById("authStatus").textContent = "Not signed in";
+    }
+
+    async function refreshAll() {
+      state.users = await api("/admin/users");
+      state.apps = await api("/admin/apps");
+      if (state.isSuperAdmin) {
+        state.admins = await api("/admin/admins");
+        state.orgs = await api("/admin/orgs");
+      } else {
+        state.admins = [];
+        state.orgs = [];
+      }
+      renderUsers();
+      renderApps();
+      renderAdmins();
+      renderOrgs();
+    }
+
+    function renderUsers() {
+      const list = document.getElementById("usersList");
+      const q = state.userSearch.trim().toLowerCase();
+      const rows = (state.users || []).filter(u => {
+        if (!q) return true;
+        return [u.email, u.status, u.firstName, u.lastName].join(" ").toLowerCase().includes(q);
+      });
+      list.innerHTML = rows.map(u => {
+        const selected = state.selectedUserId === u.id ? "selected" : "";
+        return `<div class='item ${selected}' data-id='${u.id}'>${u.email} (${u.status})</div>`;
+      }).join("") || "<div class='item'>No users</div>";
+      list.querySelectorAll("[data-id]").forEach(el => {
+        el.addEventListener("click", () => selectUser(el.getAttribute("data-id")));
+      });
+    }
+
+    function selectUser(id) {
+      const u = state.users.find(x => x.id === id);
+      if (!u) return;
+      state.selectedUserId = id;
+      document.getElementById("uEmail").value = u.email || "";
+      document.getElementById("uFirst").value = u.firstName || "";
+      document.getElementById("uLast").value = u.lastName || "";
+      document.getElementById("uStatus").value = u.status || "invited";
+      document.getElementById("uOrg").value = u.orgId || "";
+      renderUsers();
+    }
+
+    async function createUser() {
+      const payload = {
+        email: document.getElementById("uEmail").value.trim(),
+        firstName: document.getElementById("uFirst").value.trim() || undefined,
+        lastName: document.getElementById("uLast").value.trim() || undefined,
+        status: document.getElementById("uStatus").value,
+        password: document.getElementById("uPass").value || undefined,
+        orgId: document.getElementById("uOrg").value.trim() || undefined
+      };
+      await api("/admin/users", { method: "POST", body: JSON.stringify(payload) });
+      await refreshAll();
+    }
+
+    async function updateUser() {
+      if (!state.selectedUserId) return;
+      const payload = {
+        email: document.getElementById("uEmail").value.trim(),
+        firstName: document.getElementById("uFirst").value.trim() || undefined,
+        lastName: document.getElementById("uLast").value.trim() || undefined,
+        status: document.getElementById("uStatus").value,
+        password: document.getElementById("uPass").value || undefined,
+        orgId: document.getElementById("uOrg").value.trim() || undefined
+      };
+      await api("/admin/users/" + state.selectedUserId, { method: "PUT", body: JSON.stringify(payload) });
+      await refreshAll();
+    }
+
+    async function deleteUser() {
+      if (!state.selectedUserId) return;
+      await api("/admin/users/" + state.selectedUserId, { method: "DELETE" });
+      state.selectedUserId = "";
+      await refreshAll();
+    }
+
+    function renderApps() {
+      const list = document.getElementById("appsList");
+      const q = state.appSearch.trim().toLowerCase();
+      const rows = (state.apps || []).filter(a => {
+        if (!q) return true;
+        return [a.name, a.type].join(" ").toLowerCase().includes(q);
+      });
+      list.innerHTML = rows.map(a => {
+        const selected = state.selectedAppId === a.id ? "selected" : "";
+        return `<div class='item ${selected}' data-id='${a.id}'>${a.name} (${a.type})</div>`;
+      }).join("") || "<div class='item'>No apps</div>";
+      list.querySelectorAll("[data-id]").forEach(el => {
+        el.addEventListener("click", () => selectApp(el.getAttribute("data-id")));
+      });
+    }
+
+    function selectApp(id) {
+      const a = state.apps.find(x => x.id === id);
+      if (!a) return;
+      state.selectedAppId = id;
+      document.getElementById("aName").value = a.name || "";
+      document.getElementById("aType").value = a.type || "internal";
+      document.getElementById("aEnabled").value = String(Boolean(a.enabled));
+      document.getElementById("aOrg").value = a.orgId || "";
+      renderApps();
+    }
+
+    async function createApp() {
+      const payload = {
+        name: document.getElementById("aName").value.trim(),
+        type: document.getElementById("aType").value,
+        enabled: document.getElementById("aEnabled").value === "true",
+        redirectUris: document.getElementById("aRedirects").value.trim(),
+        grants: document.getElementById("aGrants").value.trim(),
+        scopes: document.getElementById("aScopes").value.trim(),
+        orgId: document.getElementById("aOrg").value.trim() || undefined
+      };
+      const res = await api("/admin/apps", { method: "POST", body: JSON.stringify(payload) });
+      document.getElementById("aClientId").value = res.client_id || "";
+      document.getElementById("aClientSecret").value = res.client_secret || "";
+      await refreshAll();
+    }
+
+    async function updateApp() {
+      if (!state.selectedAppId) return;
+      const payload = {
+        name: document.getElementById("aName").value.trim(),
+        type: document.getElementById("aType").value,
+        enabled: document.getElementById("aEnabled").value === "true",
+        orgId: document.getElementById("aOrg").value.trim() || undefined
+      };
+      await api("/admin/apps/" + state.selectedAppId, { method: "PUT", body: JSON.stringify(payload) });
+      await refreshAll();
+    }
+
+    async function deleteApp() {
+      if (!state.selectedAppId) return;
+      await api("/admin/apps/" + state.selectedAppId, { method: "DELETE" });
+      state.selectedAppId = "";
+      await refreshAll();
+    }
+
+    function renderAdmins() {
+      const list = document.getElementById("adminsList");
+      list.innerHTML = (state.admins || []).map(a => {
+        return `<div class='item'><span>${a.email}</span><div class='inline-actions'><button class='danger' data-admin-id='${a.id}'>Remove</button></div></div>`;
+      }).join("") || "<div class='item'>No admins</div>";
+      list.querySelectorAll("[data-admin-id]").forEach(btn => {
+        btn.addEventListener("click", () => removeAdmin(btn.getAttribute("data-admin-id")));
+      });
+    }
+
+    function renderOrgs() {
+      const list = document.getElementById("orgsList");
+      list.innerHTML = (state.orgs || []).map(o => {
+        const selected = state.selectedOrgId === o.id ? "selected" : "";
+        return `<div class='item ${selected}' data-org-id='${o.id}'>${o.name}</div>`;
+      }).join("") || "<div class='item'>No orgs</div>";
+      list.querySelectorAll("[data-org-id]").forEach(el => {
+        el.addEventListener("click", () => selectOrg(el.getAttribute("data-org-id")));
+      });
+    }
+
+    function selectOrg(id) {
+      const o = state.orgs.find(x => x.id === id);
+      if (!o) return;
+      state.selectedOrgId = id;
+      document.getElementById("orgName").value = o.name || "";
+      renderOrgs();
+    }
+
+    async function addAdmin() {
+      const email = document.getElementById("adminEmail").value.trim();
+      await api("/admin/admins", { method: "POST", body: JSON.stringify({ email }) });
+      await refreshAll();
+    }
+
+    async function removeAdmin(id) {
+      await api("/admin/admins/" + id, { method: "DELETE" });
+      await refreshAll();
+    }
+
+    async function addOrg() {
+      const name = document.getElementById("orgName").value.trim();
+      await api("/admin/orgs", { method: "POST", body: JSON.stringify({ name }) });
+      await refreshAll();
+    }
+
+    async function updateOrg() {
+      if (!state.selectedOrgId) return;
+      const name = document.getElementById("orgName").value.trim();
+      await api("/admin/orgs/" + state.selectedOrgId, { method: "PUT", body: JSON.stringify({ name }) });
+      await refreshAll();
+    }
+
+    async function deleteOrg() {
+      if (!state.selectedOrgId) return;
+      await api("/admin/orgs/" + state.selectedOrgId, { method: "DELETE" });
+      state.selectedOrgId = "";
+      await refreshAll();
+    }
+
+    document.getElementById("loginBtn").addEventListener("click", login);
+    document.getElementById("logoutBtn").addEventListener("click", logout);
+    document.getElementById("refreshBtn").addEventListener("click", refreshAll);
+    document.getElementById("createUserBtn").addEventListener("click", createUser);
+    document.getElementById("updateUserBtn").addEventListener("click", updateUser);
+    document.getElementById("deleteUserBtn").addEventListener("click", deleteUser);
+    document.getElementById("createAppBtn").addEventListener("click", createApp);
+    document.getElementById("updateAppBtn").addEventListener("click", updateApp);
+    document.getElementById("deleteAppBtn").addEventListener("click", deleteApp);
+    document.getElementById("addAdminBtn").addEventListener("click", addAdmin);
+    document.getElementById("addOrgBtn").addEventListener("click", addOrg);
+    document.getElementById("updateOrgBtn").addEventListener("click", updateOrg);
+    document.getElementById("deleteOrgBtn").addEventListener("click", deleteOrg);
+    document.getElementById("userSearch").addEventListener("input", (e) => { state.userSearch = e.target.value || ""; renderUsers(); });
+    document.getElementById("appSearch").addEventListener("input", (e) => { state.appSearch = e.target.value || ""; renderApps(); });
+
+    if (getToken()) {
+      applyScopes(getToken());
+      document.getElementById("authStatus").textContent = "Signed in";
+      refreshAll();
+    }
+  </script>
+</body>
+</html>
