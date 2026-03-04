@@ -2,11 +2,11 @@ package handler
 
 import (
   "context"
-  "database/sql"
   "crypto/rand"
   "crypto/rsa"
   "crypto/sha256"
   "crypto/x509"
+  "database/sql"
   "embed"
   "encoding/base64"
   "encoding/hex"
@@ -22,6 +22,7 @@ import (
 
   "github.com/alexedwards/argon2id"
   "github.com/golang-jwt/jwt/v5"
+  "github.com/jackc/pgx/v5"
   "github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -33,6 +34,8 @@ var (
   dbPool   *pgxpool.Pool
   rsaPriv  *rsa.PrivateKey
   rsaPub   *rsa.PublicKey
+
+  errClientNotFound = errors.New("client not found")
 )
 
 type envConfig struct {
@@ -219,7 +222,11 @@ func handlePasswordGrant(w http.ResponseWriter, r *http.Request, req tokenReques
   }
   client, err := getClient(req.ClientID)
   if err != nil {
-    writeError(w, "invalid_client", "Client not found", http.StatusUnauthorized)
+    if errors.Is(err, errClientNotFound) {
+      writeError(w, "invalid_client", "Client not found", http.StatusUnauthorized)
+    } else {
+      writeError(w, "server_error", "Failed to load client", http.StatusInternalServerError)
+    }
     return
   }
   if !contains(client.Grants, "password") {
@@ -279,7 +286,11 @@ func handlePasswordGrant(w http.ResponseWriter, r *http.Request, req tokenReques
 func handleClientCredentials(w http.ResponseWriter, r *http.Request, req tokenRequest) {
   client, err := getClient(req.ClientID)
   if err != nil {
-    writeError(w, "invalid_client", "Client not found", http.StatusUnauthorized)
+    if errors.Is(err, errClientNotFound) {
+      writeError(w, "invalid_client", "Client not found", http.StatusUnauthorized)
+    } else {
+      writeError(w, "server_error", "Failed to load client", http.StatusInternalServerError)
+    }
     return
   }
   if !contains(client.Grants, "client_credentials") {
@@ -315,7 +326,11 @@ func handleRefreshGrant(w http.ResponseWriter, r *http.Request, req tokenRequest
   }
   client, err := getClient(req.ClientID)
   if err != nil {
-    writeError(w, "invalid_client", "Client not found", http.StatusUnauthorized)
+    if errors.Is(err, errClientNotFound) {
+      writeError(w, "invalid_client", "Client not found", http.StatusUnauthorized)
+    } else {
+      writeError(w, "server_error", "Failed to load client", http.StatusInternalServerError)
+    }
     return
   }
   if !contains(client.Grants, "refresh_token") {
@@ -398,7 +413,7 @@ func getClient(clientID string) (*clientRecord, error) {
   }
   const q = `
     select oc.id, oc."clientId", oc."clientSecretHash", oc."clientSecretEncrypted", oc."tokenEndpointAuthMethod",
-           oc."redirectUris", oc.grants, oc.enabled,
+           coalesce(oc."redirectUris", '{}'::text[]), coalesce(oc.grants, '{}'::text[]), oc.enabled,
            a.id, a.type, a.enabled
     from "OAuthClient" oc
     join "Application" a on a.id = oc."applicationId"
@@ -409,6 +424,9 @@ func getClient(clientID string) (*clientRecord, error) {
   var grants []string
   rec := &clientRecord{}
   if err := row.Scan(&rec.ID, &rec.ClientID, &rec.ClientSecretHash, &rec.ClientSecretEnc, &rec.TokenAuthMethod, &redirect, &grants, &rec.Enabled, &rec.AppID, &rec.AppType, &rec.AppEnabled); err != nil {
+    if errors.Is(err, pgx.ErrNoRows) {
+      return nil, errClientNotFound
+    }
     return nil, err
   }
   rec.RedirectURIs = redirect
