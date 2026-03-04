@@ -2,6 +2,7 @@ package handler
 
 import (
   "context"
+  "database/sql"
   "crypto/rand"
   "crypto/rsa"
   "crypto/sha256"
@@ -22,7 +23,6 @@ import (
   "github.com/alexedwards/argon2id"
   "github.com/golang-jwt/jwt/v5"
   "github.com/jackc/pgx/v5/pgxpool"
-  "github.com/jackc/pgx/v5/pgtype"
 )
 
 //go:embed admin-ui.html
@@ -86,21 +86,15 @@ func initResources() {
 
     privPem := os.Getenv("JWT_PRIVATE_KEY")
     pubPem := os.Getenv("JWT_PUBLIC_KEY")
-    if privPem != "" && pubPem != "" {
-      priv, pub, err := parseKeys(privPem, pubPem)
-      if err != nil {
-        panic(err)
-      }
-      rsaPriv = priv
-      rsaPub = pub
-    } else {
-      key, err := rsa.GenerateKey(rand.Reader, 2048)
-      if err != nil {
-        panic(err)
-      }
-      rsaPriv = key
-      rsaPub = &key.PublicKey
+    if privPem == "" || pubPem == "" {
+      panic("JWT_PRIVATE_KEY and JWT_PUBLIC_KEY are required")
     }
+    priv, pub, err := parseKeys(privPem, pubPem)
+    if err != nil {
+      panic(err)
+    }
+    rsaPriv = priv
+    rsaPub = pub
   })
 }
 
@@ -384,7 +378,7 @@ type userRecord struct {
   Email        string
   PasswordHash string
   Status       string
-  DeletedAt    pgtype.Timestamptz
+  DeletedAt    sql.NullTime
 }
 
 type refreshRecord struct {
@@ -395,7 +389,7 @@ type refreshRecord struct {
   TokenHash string
   FamilyID  string
   ExpiresAt time.Time
-  RevokedAt pgtype.Timestamptz
+  RevokedAt sql.NullTime
 }
 
 func getClient(clientID string) (*clientRecord, error) {
@@ -411,14 +405,14 @@ func getClient(clientID string) (*clientRecord, error) {
     where oc."clientId" = $1
   `
   row := dbPool.QueryRow(context.Background(), q, clientID)
-  var redirect pgtype.TextArray
-  var grants pgtype.TextArray
+  var redirect []string
+  var grants []string
   rec := &clientRecord{}
   if err := row.Scan(&rec.ID, &rec.ClientID, &rec.ClientSecretHash, &rec.ClientSecretEnc, &rec.TokenAuthMethod, &redirect, &grants, &rec.Enabled, &rec.AppID, &rec.AppType, &rec.AppEnabled); err != nil {
     return nil, err
   }
-  rec.RedirectURIs = textArrayToSlice(redirect)
-  rec.Grants = textArrayToSlice(grants)
+  rec.RedirectURIs = redirect
+  rec.Grants = grants
   if !rec.Enabled || !rec.AppEnabled {
     return nil, errors.New("client disabled")
   }
@@ -452,14 +446,6 @@ func getClientScopes(clientDBID string) ([]string, error) {
     scopes = append(scopes, name)
   }
   return scopes, nil
-}
-
-func textArrayToSlice(arr pgtype.TextArray) []string {
-  var out []string
-  if err := arr.AssignTo(&out); err == nil {
-    return out
-  }
-  return []string{}
 }
 
 func verifyClientSecret(client *clientRecord, secret string) bool {
@@ -755,8 +741,15 @@ func createUser(w http.ResponseWriter, r *http.Request, isSuper bool, orgID stri
   }
   const q = `insert into "User" (email, "orgId", "passwordHash", status, "firstName", "lastName", "invitedAt", "activatedAt") values ($1, $2, $3, $4, $5, $6, $7, $8) returning id, email, status, "firstName", "lastName", "orgId"`
   row := dbPool.QueryRow(context.Background(), q, email, orgID, passHash, status, body["firstName"], body["lastName"], time.Now(), time.Now())
-  var resp map[string]string = map[string]string{}
-  if err := row.Scan(&resp["id"], &resp["email"], &resp["status"], &resp["firstName"], &resp["lastName"], &resp["orgId"]); err != nil { writeServerError(w, err); return }
+  var resp struct {
+    ID        string `json:"id"`
+    Email     string `json:"email"`
+    Status    string `json:"status"`
+    FirstName string `json:"firstName"`
+    LastName  string `json:"lastName"`
+    OrgID     string `json:"orgId"`
+  }
+  if err := row.Scan(&resp.ID, &resp.Email, &resp.Status, &resp.FirstName, &resp.LastName, &resp.OrgID); err != nil { writeServerError(w, err); return }
   writeJSON(w, resp, http.StatusOK)
 }
 
@@ -805,8 +798,15 @@ func updateUser(w http.ResponseWriter, r *http.Request, isSuper bool, orgID stri
     returning id, email, status, "firstName", "lastName", "orgId"
   `
   row := dbPool.QueryRow(context.Background(), q, email, firstName, lastName, status, passHash, updateOrg, userID)
-  var resp map[string]string = map[string]string{}
-  if err := row.Scan(&resp["id"], &resp["email"], &resp["status"], &resp["firstName"], &resp["lastName"], &resp["orgId"]); err != nil {
+  var resp struct {
+    ID        string `json:"id"`
+    Email     string `json:"email"`
+    Status    string `json:"status"`
+    FirstName string `json:"firstName"`
+    LastName  string `json:"lastName"`
+    OrgID     string `json:"orgId"`
+  }
+  if err := row.Scan(&resp.ID, &resp.Email, &resp.Status, &resp.FirstName, &resp.LastName, &resp.OrgID); err != nil {
     writeServerError(w, err)
     return
   }
@@ -952,8 +952,14 @@ func updateApp(w http.ResponseWriter, r *http.Request, isSuper bool, orgID strin
     enabledVal = &v
   }
   row := dbPool.QueryRow(context.Background(), q, name, appType, enabledVal, updateOrg, appID)
-  var resp map[string]any = map[string]any{}
-  if err := row.Scan(&resp["id"], &resp["name"], &resp["type"], &resp["enabled"], &resp["orgId"]); err != nil {
+  var resp struct {
+    ID      string `json:"id"`
+    Name    string `json:"name"`
+    Type    string `json:"type"`
+    Enabled bool   `json:"enabled"`
+    OrgID   string `json:"orgId"`
+  }
+  if err := row.Scan(&resp.ID, &resp.Name, &resp.Type, &resp.Enabled, &resp.OrgID); err != nil {
     writeServerError(w, err)
     return
   }
