@@ -739,8 +739,16 @@ func createUser(w http.ResponseWriter, r *http.Request, isSuper bool, orgID stri
     if err != nil { writeServerError(w, err); return }
     passHash = hash
   }
+  var invitedAt any = nil
+  var activatedAt any = nil
+  switch status {
+  case "active":
+    activatedAt = time.Now()
+  case "invited":
+    invitedAt = time.Now()
+  }
   const q = `insert into "User" (email, "orgId", "passwordHash", status, "firstName", "lastName", "invitedAt", "activatedAt") values ($1, $2, $3, $4, $5, $6, $7, $8) returning id, email, status, "firstName", "lastName", "orgId"`
-  row := dbPool.QueryRow(context.Background(), q, email, orgID, passHash, status, body["firstName"], body["lastName"], time.Now(), time.Now())
+  row := dbPool.QueryRow(context.Background(), q, email, orgID, passHash, status, body["firstName"], body["lastName"], invitedAt, activatedAt)
   var resp struct {
     ID        string `json:"id"`
     Email     string `json:"email"`
@@ -972,7 +980,19 @@ func deleteApp(w http.ResponseWriter, r *http.Request, isSuper bool, orgID strin
   if !isSuper {
     if !appInOrg(appID, orgID) { writeError(w, "forbidden", "App not in org", http.StatusForbidden); return }
   }
-  if _, err := dbPool.Exec(context.Background(), `delete from "Application" where id = $1`, appID); err != nil { writeServerError(w, err); return }
+  ctx := context.Background()
+  tx, err := dbPool.Begin(ctx)
+  if err != nil { writeServerError(w, err); return }
+  defer tx.Rollback(ctx)
+
+  if _, err := tx.Exec(ctx, `delete from "RefreshToken" where "clientId" in (select id from "OAuthClient" where "applicationId" = $1)`, appID); err != nil { writeServerError(w, err); return }
+  if _, err := tx.Exec(ctx, `delete from "ClientScope" where "clientId" in (select id from "OAuthClient" where "applicationId" = $1)`, appID); err != nil { writeServerError(w, err); return }
+  if _, err := tx.Exec(ctx, `delete from "OAuthClient" where "applicationId" = $1`, appID); err != nil { writeServerError(w, err); return }
+  if _, err := tx.Exec(ctx, `delete from "UserApplication" where "applicationId" = $1`, appID); err != nil { writeServerError(w, err); return }
+  if _, err := tx.Exec(ctx, `delete from "UserRole" where "applicationId" = $1`, appID); err != nil { writeServerError(w, err); return }
+  if _, err := tx.Exec(ctx, `delete from "Application" where id = $1`, appID); err != nil { writeServerError(w, err); return }
+
+  if err := tx.Commit(ctx); err != nil { writeServerError(w, err); return }
   writeJSON(w, map[string]string{"id": appID}, http.StatusOK)
 }
 
@@ -1059,9 +1079,26 @@ func updateOrg(w http.ResponseWriter, r *http.Request) {
 func deleteOrg(w http.ResponseWriter, r *http.Request) {
   orgID := strings.TrimPrefix(r.URL.Path, "/admin/orgs/")
   if orgID == "" { writeError(w, "invalid_request", "org id required", http.StatusBadRequest); return }
-  if _, err := dbPool.Exec(context.Background(), `delete from "Organization" where id = $1`, orgID); err != nil {
-    writeServerError(w, err); return
-  }
+  ctx := context.Background()
+  tx, err := dbPool.Begin(ctx)
+  if err != nil { writeServerError(w, err); return }
+  defer tx.Rollback(ctx)
+
+  if _, err := tx.Exec(ctx, `delete from "RefreshToken" where "userId" in (select id from "User" where "orgId" = $1)`, orgID); err != nil { writeServerError(w, err); return }
+  if _, err := tx.Exec(ctx, `delete from "UserApplication" where "userId" in (select id from "User" where "orgId" = $1)`, orgID); err != nil { writeServerError(w, err); return }
+  if _, err := tx.Exec(ctx, `delete from "UserRole" where "userId" in (select id from "User" where "orgId" = $1)`, orgID); err != nil { writeServerError(w, err); return }
+  if _, err := tx.Exec(ctx, `delete from "User" where "orgId" = $1`, orgID); err != nil { writeServerError(w, err); return }
+
+  if _, err := tx.Exec(ctx, `delete from "RefreshToken" where "clientId" in (select oc.id from "OAuthClient" oc join "Application" a on a.id = oc."applicationId" where a."orgId" = $1)`, orgID); err != nil { writeServerError(w, err); return }
+  if _, err := tx.Exec(ctx, `delete from "ClientScope" where "clientId" in (select oc.id from "OAuthClient" oc join "Application" a on a.id = oc."applicationId" where a."orgId" = $1)`, orgID); err != nil { writeServerError(w, err); return }
+  if _, err := tx.Exec(ctx, `delete from "OAuthClient" where "applicationId" in (select id from "Application" where "orgId" = $1)`, orgID); err != nil { writeServerError(w, err); return }
+  if _, err := tx.Exec(ctx, `delete from "UserApplication" where "applicationId" in (select id from "Application" where "orgId" = $1)`, orgID); err != nil { writeServerError(w, err); return }
+  if _, err := tx.Exec(ctx, `delete from "UserRole" where "applicationId" in (select id from "Application" where "orgId" = $1)`, orgID); err != nil { writeServerError(w, err); return }
+  if _, err := tx.Exec(ctx, `delete from "Application" where "orgId" = $1`, orgID); err != nil { writeServerError(w, err); return }
+
+  if _, err := tx.Exec(ctx, `delete from "Organization" where id = $1`, orgID); err != nil { writeServerError(w, err); return }
+
+  if err := tx.Commit(ctx); err != nil { writeServerError(w, err); return }
   writeJSON(w, map[string]string{"id": orgID}, http.StatusOK)
 }
 
