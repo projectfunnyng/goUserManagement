@@ -225,7 +225,7 @@ func handlePasswordGrant(w http.ResponseWriter, r *http.Request, req tokenReques
     if errors.Is(err, errClientNotFound) {
       writeError(w, "invalid_client", "Client not found", http.StatusUnauthorized)
     } else {
-      writeError(w, "server_error", "Failed to load client", http.StatusInternalServerError)
+      writeServerError(w, err)
     }
     return
   }
@@ -289,7 +289,7 @@ func handleClientCredentials(w http.ResponseWriter, r *http.Request, req tokenRe
     if errors.Is(err, errClientNotFound) {
       writeError(w, "invalid_client", "Client not found", http.StatusUnauthorized)
     } else {
-      writeError(w, "server_error", "Failed to load client", http.StatusInternalServerError)
+      writeServerError(w, err)
     }
     return
   }
@@ -329,7 +329,7 @@ func handleRefreshGrant(w http.ResponseWriter, r *http.Request, req tokenRequest
     if errors.Is(err, errClientNotFound) {
       writeError(w, "invalid_client", "Client not found", http.StatusUnauthorized)
     } else {
-      writeError(w, "server_error", "Failed to load client", http.StatusInternalServerError)
+      writeServerError(w, err)
     }
     return
   }
@@ -376,8 +376,8 @@ func handleRefreshGrant(w http.ResponseWriter, r *http.Request, req tokenRequest
 type clientRecord struct {
   ID              string
   ClientID        string
-  ClientSecretHash string
-  ClientSecretEnc  string
+  ClientSecretHash sql.NullString
+  ClientSecretEnc  sql.NullString
   TokenAuthMethod string
   RedirectURIs    []string
   Grants          []string
@@ -470,10 +470,10 @@ func verifyClientSecret(client *clientRecord, secret string) bool {
   if client.AppType == "public" {
     return true
   }
-  if secret == "" || client.ClientSecretHash == "" {
+  if secret == "" || !client.ClientSecretHash.Valid || client.ClientSecretHash.String == "" {
     return false
   }
-  match, err := argon2id.ComparePasswordAndHash(secret, client.ClientSecretHash)
+  match, err := argon2id.ComparePasswordAndHash(secret, client.ClientSecretHash.String)
   return err == nil && match
 }
 
