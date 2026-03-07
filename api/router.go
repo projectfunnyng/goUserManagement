@@ -200,6 +200,43 @@ type tokenRequest struct {
   RefreshToken string `json:"refresh_token"`
 }
 
+type userCreateRequest struct {
+  Email     string  `json:"email"`
+  FirstName *string `json:"firstName"`
+  LastName  *string `json:"lastName"`
+  Status    string  `json:"status"`
+  Password  *string `json:"password"`
+  OrgID     *string `json:"orgId"`
+  IsAdmin   bool    `json:"isAdmin"`
+}
+
+type userUpdateRequest struct {
+  Email     *string `json:"email"`
+  FirstName *string `json:"firstName"`
+  LastName  *string `json:"lastName"`
+  Status    *string `json:"status"`
+  Password  *string `json:"password"`
+  OrgID     *string `json:"orgId"`
+  IsAdmin   *bool   `json:"isAdmin"`
+}
+
+type appCreateRequest struct {
+  Name         string  `json:"name"`
+  Type         string  `json:"type"`
+  Enabled      *bool   `json:"enabled"`
+  RedirectURIs *string `json:"redirectUris"`
+  Grants       *string `json:"grants"`
+  Scopes       *string `json:"scopes"`
+  OrgID        *string `json:"orgId"`
+}
+
+type appUpdateRequest struct {
+  Name    *string `json:"name"`
+  Type    *string `json:"type"`
+  Enabled *bool   `json:"enabled"`
+  OrgID   *string `json:"orgId"`
+}
+
 func handleToken(w http.ResponseWriter, r *http.Request) {
   var req tokenRequest
   if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -769,22 +806,19 @@ func listUsers(w http.ResponseWriter, orgID string) {
 }
 
 func createUser(w http.ResponseWriter, r *http.Request, isSuper bool, orgID string) {
-  var body map[string]any
+  var body userCreateRequest
   if err := json.NewDecoder(r.Body).Decode(&body); err != nil { writeError(w, "invalid_request", "Invalid JSON", http.StatusBadRequest); return }
-  email := strings.ToLower(strings.TrimSpace(fmt.Sprint(body["email"])))
+  email := strings.ToLower(strings.TrimSpace(body.Email))
   if email == "" { writeError(w, "invalid_request", "email required", http.StatusBadRequest); return }
-  status := fmt.Sprint(body["status"])
+  status := strings.TrimSpace(body.Status)
   if status == "" { status = "invited" }
   if isSuper {
-    orgID = strings.TrimSpace(fmt.Sprint(body["orgId"]))
+    orgID = strings.TrimSpace(stringValue(body.OrgID))
     if orgID == "" { writeError(w, "invalid_request", "orgId is required", http.StatusBadRequest); return }
   }
   if orgID == "" { writeError(w, "invalid_request", "orgId is required", http.StatusBadRequest); return }
-  pass := fmt.Sprint(body["password"])
-  wantAdmin := false
-  if isSuper {
-    wantAdmin = parseBool(body["isAdmin"])
-  }
+  pass := strings.TrimSpace(stringValue(body.Password))
+  wantAdmin := isSuper && body.IsAdmin
   var passHash any = nil
   if pass != "" {
     hash, err := argon2id.CreateHash(pass, argon2id.DefaultParams)
@@ -800,7 +834,7 @@ func createUser(w http.ResponseWriter, r *http.Request, isSuper bool, orgID stri
     invitedAt = time.Now()
   }
   const q = `insert into "User" (email, "orgId", "passwordHash", status, "firstName", "lastName", "invitedAt", "activatedAt") values ($1, $2, $3, $4, $5, $6, $7, $8) returning id, email, status, "firstName", "lastName", "orgId"`
-  row := dbPool.QueryRow(context.Background(), q, email, orgID, passHash, status, body["firstName"], body["lastName"], invitedAt, activatedAt)
+  row := dbPool.QueryRow(context.Background(), q, email, orgID, passHash, status, nullableString(body.FirstName), nullableString(body.LastName), invitedAt, activatedAt)
   var resp struct {
     ID        string `json:"id"`
     Email     string `json:"email"`
@@ -828,21 +862,18 @@ func updateUser(w http.ResponseWriter, r *http.Request, isSuper bool, orgID stri
       return
     }
   }
-  var body map[string]any
+  var body userUpdateRequest
   if err := json.NewDecoder(r.Body).Decode(&body); err != nil { writeError(w, "invalid_request", "Invalid JSON", http.StatusBadRequest); return }
-  email := strings.ToLower(strings.TrimSpace(fmt.Sprint(body["email"])))
-  firstName := fmt.Sprint(body["firstName"])
-  lastName := fmt.Sprint(body["lastName"])
-  status := fmt.Sprint(body["status"])
-  pass := fmt.Sprint(body["password"])
-  updateOrg := ""
+  email := cleanOptionalLower(body.Email)
+  firstName := nullableTrimmedString(body.FirstName)
+  lastName := nullableTrimmedString(body.LastName)
+  status := cleanOptional(body.Status)
+  pass := strings.TrimSpace(stringValue(body.Password))
+  var updateOrg any = nil
   if isSuper {
-    updateOrg = strings.TrimSpace(fmt.Sprint(body["orgId"]))
+    updateOrg = nullableTrimmedString(body.OrgID)
   }
-  wantAdmin := false
-  if isSuper {
-    wantAdmin = parseBool(body["isAdmin"])
-  }
+  wantAdmin := isSuper && boolValue(body.IsAdmin)
 
   var passHash any = nil
   if pass != "" {
@@ -853,12 +884,12 @@ func updateUser(w http.ResponseWriter, r *http.Request, isSuper bool, orgID stri
 
   const q = `
     update "User"
-    set email = coalesce(nullif($1,''), email),
-        "firstName" = $2,
-        "lastName" = $3,
-        status = coalesce(nullif($4,''), status),
+    set email = coalesce($1, email),
+        "firstName" = coalesce($2, "firstName"),
+        "lastName" = coalesce($3, "lastName"),
+        status = coalesce(cast($4 as "UserStatus"), status),
         "passwordHash" = coalesce($5, "passwordHash"),
-        "orgId" = coalesce(nullif($6,''), "orgId"),
+        "orgId" = coalesce($6, "orgId"),
         "deletedAt" = case when $4 = 'deleted' then now() else "deletedAt" end,
         "updatedAt" = now()
     where id = $7
@@ -991,17 +1022,20 @@ func listApps(w http.ResponseWriter, orgID string) {
 }
 
 func createApp(w http.ResponseWriter, r *http.Request, isSuper bool, orgID string) {
-  var body map[string]any
+  var body appCreateRequest
   if err := json.NewDecoder(r.Body).Decode(&body); err != nil { writeError(w, "invalid_request", "Invalid JSON", http.StatusBadRequest); return }
-  name := strings.TrimSpace(fmt.Sprint(body["name"]))
-  appType := strings.TrimSpace(fmt.Sprint(body["type"]))
-  enabled := fmt.Sprint(body["enabled"]) != "false"
+  name := strings.TrimSpace(body.Name)
+  appType := strings.TrimSpace(body.Type)
+  enabled := true
+  if body.Enabled != nil {
+    enabled = *body.Enabled
+  }
   if name == "" || appType == "" {
     writeError(w, "invalid_request", "name and type are required", http.StatusBadRequest)
     return
   }
   if isSuper {
-    orgID = strings.TrimSpace(fmt.Sprint(body["orgId"]))
+    orgID = strings.TrimSpace(stringValue(body.OrgID))
   }
   if orgID == "" {
     writeError(w, "invalid_request", "orgId is required", http.StatusBadRequest)
@@ -1012,9 +1046,9 @@ func createApp(w http.ResponseWriter, r *http.Request, isSuper bool, orgID strin
   secretHash, err := argon2id.CreateHash(clientSecret, argon2id.DefaultParams)
   if err != nil { writeServerError(w, err); return }
 
-  redirectUris := toStringSlice(body["redirectUris"])
-  grants := toStringSlice(body["grants"])
-  scopes := toStringSlice(body["scopes"])
+  redirectUris := toStringSlice(stringValue(body.RedirectURIs))
+  grants := toStringSlice(stringValue(body.Grants))
+  scopes := toStringSlice(stringValue(body.Scopes))
 
   ctx := context.Background()
   tx, err := dbPool.Begin(ctx)
@@ -1065,29 +1099,27 @@ func updateApp(w http.ResponseWriter, r *http.Request, isSuper bool, orgID strin
       return
     }
   }
-  var body map[string]any
+  var body appUpdateRequest
   if err := json.NewDecoder(r.Body).Decode(&body); err != nil { writeError(w, "invalid_request", "Invalid JSON", http.StatusBadRequest); return }
-  name := strings.TrimSpace(fmt.Sprint(body["name"]))
-  appType := strings.TrimSpace(fmt.Sprint(body["type"]))
-  enabled := fmt.Sprint(body["enabled"])
-  updateOrg := ""
+  name := nullableTrimmedString(body.Name)
+  appType := nullableTrimmedString(body.Type)
+  var updateOrg any = nil
   if isSuper {
-    updateOrg = strings.TrimSpace(fmt.Sprint(body["orgId"]))
+    updateOrg = nullableTrimmedString(body.OrgID)
   }
   const q = `
     update "Application"
-    set name = coalesce(nullif($1,''), name),
-        type = coalesce(nullif($2,''), type),
+    set name = coalesce($1, name),
+        type = coalesce($2, type),
         enabled = coalesce($3::boolean, enabled),
-        "orgId" = coalesce(nullif($4,''), "orgId"),
+        "orgId" = coalesce($4, "orgId"),
         "updatedAt" = now()
     where id = $5
     returning id, name, type, enabled, "orgId"
   `
   var enabledVal *bool
-  if enabled != "" {
-    v := enabled == "true"
-    enabledVal = &v
+  if body.Enabled != nil {
+    enabledVal = body.Enabled
   }
   row := dbPool.QueryRow(context.Background(), q, name, appType, enabledVal, updateOrg, appID)
   var resp struct {
@@ -1318,6 +1350,57 @@ func parseBool(v any) bool {
   default:
     return false
   }
+}
+
+func boolValue(v *bool) bool {
+  return v != nil && *v
+}
+
+func stringValue(v *string) string {
+  if v == nil {
+    return ""
+  }
+  return *v
+}
+
+func nullableString(v *string) any {
+  if v == nil {
+    return nil
+  }
+  return *v
+}
+
+func nullableTrimmedString(v *string) any {
+  if v == nil {
+    return nil
+  }
+  trimmed := strings.TrimSpace(*v)
+  if trimmed == "" {
+    return nil
+  }
+  return trimmed
+}
+
+func cleanOptional(v *string) any {
+  if v == nil {
+    return nil
+  }
+  trimmed := strings.TrimSpace(*v)
+  if trimmed == "" {
+    return nil
+  }
+  return trimmed
+}
+
+func cleanOptionalLower(v *string) any {
+  if v == nil {
+    return nil
+  }
+  trimmed := strings.ToLower(strings.TrimSpace(*v))
+  if trimmed == "" {
+    return nil
+  }
+  return trimmed
 }
 
 

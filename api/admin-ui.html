@@ -57,11 +57,19 @@
       </div>
       <div style="margin-top:8px; display:flex; gap:8px;">
         <button id="loginBtn">Sign In</button>
-        <button id="logoutBtn" class="secondary">Sign Out</button>
-        <button id="refreshBtn" class="secondary">Refresh</button>
         <div class="muted" id="authStatus">Not signed in</div>
       </div>
       <div class="muted" id="loginError"></div>
+    </div>
+
+    <div class="card" id="sessionCard" data-auth-section style="display:none;">
+      <div class="row" style="align-items:center;">
+        <div class="muted" id="sessionStatus">Signed in</div>
+        <div style="display:flex; justify-content:flex-end; gap:8px;">
+          <button id="refreshBtn" class="secondary">Refresh</button>
+          <button id="logoutBtn" class="secondary">Sign Out</button>
+        </div>
+      </div>
     </div>
 
     <div class="card" data-auth-section style="display:none;">
@@ -250,6 +258,7 @@
 
     function setAuthVisible(isAuthed) {
       document.getElementById("loginCard").style.display = isAuthed ? "none" : "block";
+      document.getElementById("sessionCard").style.display = isAuthed ? "block" : "none";
       document.querySelectorAll("[data-auth-section]").forEach(el => {
         if (!isAuthed) {
           el.style.display = "none";
@@ -270,15 +279,45 @@
       const isSuper = state.isSuperAdmin;
       uOrg.disabled = !isSuper;
       aOrg.disabled = !isSuper;
+      const orgs = availableOrgs();
       const orgOptions = ["<option value=''>Select organization</option>"].concat(
-        (state.orgs || []).map((org) => `<option value="${org.id}">${org.name}</option>`)
+        orgs.map((org) => `<option value="${escapeAttr(org.id)}">${escapeHtml(org.name || org.id)}</option>`)
       ).join("");
       uOrg.innerHTML = orgOptions;
       aOrg.innerHTML = orgOptions;
       if (!isSuper) {
-        uOrg.value = "";
-        aOrg.value = "";
+        ensureSelectedOrgOption(uOrg, state.selectedUserId ? (state.users.find((u) => u.id === state.selectedUserId) || {}).orgId : "");
+        ensureSelectedOrgOption(aOrg, state.selectedAppId ? (state.apps.find((a) => a.id === state.selectedAppId) || {}).orgId : "");
       }
+    }
+
+    function availableOrgs() {
+      const map = new Map();
+      (state.orgs || []).forEach((org) => {
+        if (org && org.id) map.set(org.id, { id: org.id, name: org.name || org.id });
+      });
+      (state.users || []).forEach((user) => {
+        if (user && user.orgId) map.set(user.orgId, { id: user.orgId, name: user.orgName || user.orgId });
+      });
+      (state.apps || []).forEach((app) => {
+        if (app && app.orgId) map.set(app.orgId, { id: app.orgId, name: app.orgName || app.orgId });
+      });
+      return Array.from(map.values());
+    }
+
+    function ensureSelectedOrgOption(selectEl, orgId) {
+      if (!orgId) {
+        selectEl.value = "";
+        return;
+      }
+      const exists = Array.from(selectEl.options).some((opt) => opt.value === orgId);
+      if (!exists) {
+        const extra = document.createElement("option");
+        extra.value = orgId;
+        extra.textContent = orgId;
+        selectEl.appendChild(extra);
+      }
+      selectEl.value = orgId;
     }
 
     function logConsole(message, detail) {
@@ -314,6 +353,10 @@
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replace(/"/g, "&quot;");
     }
 
     async function api(path, options) {
@@ -352,6 +395,7 @@
         setToken(token);
         applyScopes(token);
         document.getElementById("authStatus").textContent = "Signed in";
+        document.getElementById("sessionStatus").textContent = "Signed in";
         logConsole("Login succeeded", { scope: data.scope || "" });
         await refreshAll();
       } catch (e) {
@@ -363,6 +407,7 @@
     function logout() {
       setToken("");
       document.getElementById("authStatus").textContent = "Not signed in";
+      document.getElementById("sessionStatus").textContent = "Not signed in";
       setAuthVisible(false);
       syncOrgInputs();
       logConsole("Logged out");
@@ -416,6 +461,7 @@
       document.getElementById("uStatus").value = u.status || "invited";
       document.getElementById("uOrg").value = u.orgId || "";
       document.getElementById("uIsAdmin").checked = Boolean(u.isAdmin);
+      syncOrgInputs();
       renderUsers();
     }
 
@@ -479,6 +525,7 @@
       document.getElementById("aType").value = a.type || "internal";
       document.getElementById("aEnabled").value = String(Boolean(a.enabled));
       document.getElementById("aOrg").value = a.orgId || "";
+      syncOrgInputs();
       renderApps();
     }
 
@@ -578,6 +625,7 @@
     if (getToken()) {
       applyScopes(getToken());
       document.getElementById("authStatus").textContent = "Signed in";
+      document.getElementById("sessionStatus").textContent = "Signed in";
       refreshAll();
     }
   </script>
