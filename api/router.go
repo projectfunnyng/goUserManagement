@@ -154,7 +154,10 @@ func serveUI(w http.ResponseWriter) {
   }
   w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';")
   w.Header().Set("Content-Type", "text/html; charset=utf-8")
-  w.Header().Set("Cache-Control", "no-store")
+  w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0")
+  w.Header().Set("Pragma", "no-cache")
+  w.Header().Set("Expires", "0")
+  w.Header().Set("Surrogate-Control", "no-store")
   w.WriteHeader(http.StatusOK)
   w.Write(data)
 }
@@ -718,14 +721,21 @@ func verifyToken(token string) (jwt.MapClaims, error) {
 
 func listUsers(w http.ResponseWriter, orgID string) {
   const qBase = `
-    select u.id, u.email, u.status, u."firstName", u."lastName", u."orgId",
+    select u.id, u.email, u.status, u."firstName", u."lastName", u."orgId", coalesce(o.name, ''),
            exists(
              select 1
              from "UserRole" ur
              join "Role" r on r.id = ur."roleId"
-             where ur."userId" = u.id and r.name = 'user_admin'
-           ) as "isAdmin"
+             where ur."userId" = u.id and r.name in ('user_admin', 'useradmin')
+           ) as "isAdmin",
+           exists(
+             select 1
+             from "UserRole" ur
+             join "Role" r on r.id = ur."roleId"
+             where ur."userId" = u.id and r.name in ('super_admin', 'superadmin')
+           ) as "isSuperAdmin"
     from "User" u
+    left join "Organization" o on o.id = u."orgId"
     where u.email <> 'admin@admin.com'
   `
   q := qBase
@@ -745,12 +755,14 @@ func listUsers(w http.ResponseWriter, orgID string) {
     FirstName string `json:"firstName"`
     LastName  string `json:"lastName"`
     OrgID     string `json:"orgId"`
+    OrgName   string `json:"orgName"`
     IsAdmin   bool   `json:"isAdmin"`
+    IsSuperAdmin bool `json:"isSuperAdmin"`
   }
   var out []item
   for rows.Next() {
     var it item
-    if err := rows.Scan(&it.ID, &it.Email, &it.Status, &it.FirstName, &it.LastName, &it.OrgID, &it.IsAdmin); err != nil { writeServerError(w, err); return }
+    if err := rows.Scan(&it.ID, &it.Email, &it.Status, &it.FirstName, &it.LastName, &it.OrgID, &it.OrgName, &it.IsAdmin, &it.IsSuperAdmin); err != nil { writeServerError(w, err); return }
     out = append(out, it)
   }
   writeJSON(w, out, http.StatusOK)
@@ -889,27 +901,75 @@ func deleteUser(w http.ResponseWriter, r *http.Request, isSuper bool, orgID stri
 }
 
 func setUserAdmin(userID string, makeAdmin bool) error {
-  var roleID string
-  if err := dbPool.QueryRow(context.Background(), `select id from "Role" where name = 'user_admin'`).Scan(&roleID); err != nil {
-    return err
-  }
   if makeAdmin {
-    _, err := dbPool.Exec(context.Background(), `insert into "UserRole" ("userId","roleId") values ($1,$2) on conflict do nothing`, userID, roleID)
+    roleID, err := ensureRole("user_admin", "Organization administrator")
+    if err != nil {
+      return err
+    }
+    _, err = dbPool.Exec(context.Background(), `insert into "UserRole" ("userId","roleId") values ($1,$2) on conflict do nothing`, userID, roleID)
     return err
   }
-  _, err := dbPool.Exec(context.Background(), `delete from "UserRole" where "userId" = $1 and "roleId" = $2`, userID, roleID)
+  _, err := dbPool.Exec(
+    context.Background(),
+    `delete from "UserRole"
+      where "userId" = $1
+        and "roleId" in (select id from "Role" where name in ('user_admin', 'useradmin'))`,
+    userID,
+  )
   return err
 }
 
+func getRoleIDByNames(names ...string) (string, error) {
+  for _, name := range names {
+    var roleID string
+    err := dbPool.QueryRow(context.Background(), `select id from "Role" where name = $1`, name).Scan(&roleID)
+    if err == nil {
+      return roleID, nil
+    }
+    if errors.Is(err, pgx.ErrNoRows) {
+      continue
+    }
+    return "", err
+  }
+  return "", fmt.Errorf("role not found: %s", strings.Join(names, ", "))
+}
+
+func ensureRole(name, description string) (string, error) {
+  roleID, err := getRoleIDByNames(name)
+  if err == nil {
+    return roleID, nil
+  }
+  if !strings.Contains(err.Error(), "role not found") {
+    return "", err
+  }
+
+  var createdID string
+  err = dbPool.QueryRow(
+    context.Background(),
+    `insert into "Role" (name, description) values ($1, $2) returning id`,
+    name,
+    description,
+  ).Scan(&createdID)
+  if err == nil {
+    return createdID, nil
+  }
+
+  return getRoleIDByNames(name)
+}
+
 func listApps(w http.ResponseWriter, orgID string) {
-  const qBase = `select id, name, type, enabled, "orgId" from "Application"`
+  const qBase = `
+    select a.id, a.name, a.type, a.enabled, a."orgId", coalesce(o.name, '')
+    from "Application" a
+    left join "Organization" o on o.id = a."orgId"
+  `
   q := qBase
   args := []any{}
   if orgID != "" {
-    q += ` where "orgId" = $1`
+    q += ` where a."orgId" = $1`
     args = append(args, orgID)
   }
-  q += ` order by "createdAt" desc`
+  q += ` order by a."createdAt" desc`
   rows, err := dbPool.Query(context.Background(), q, args...)
   if err != nil { writeServerError(w, err); return }
   defer rows.Close()
@@ -919,11 +979,12 @@ func listApps(w http.ResponseWriter, orgID string) {
     Type    string `json:"type"`
     Enabled bool   `json:"enabled"`
     OrgID   string `json:"orgId"`
+    OrgName string `json:"orgName"`
   }
   var out []item
   for rows.Next() {
     var it item
-    if err := rows.Scan(&it.ID, &it.Name, &it.Type, &it.Enabled, &it.OrgID); err != nil { writeServerError(w, err); return }
+    if err := rows.Scan(&it.ID, &it.Name, &it.Type, &it.Enabled, &it.OrgID, &it.OrgName); err != nil { writeServerError(w, err); return }
     out = append(out, it)
   }
   writeJSON(w, out, http.StatusOK)

@@ -22,6 +22,9 @@
     .muted { color: #6b7280; font-size: 12px; }
     .inline-actions { display: flex; gap: 6px; }
     [data-auth-section] { display: none; }
+    .console { background: #111827; color: #e5e7eb; border-radius: 8px; padding: 10px; min-height: 160px; max-height: 280px; overflow: auto; font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; }
+    .console-line { padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .console-line:last-child { border-bottom: none; }
   </style>
 </head>
 <body>
@@ -101,8 +104,8 @@
           </select>
         </div>
         <div>
-          <label>Org ID (superAdmin)</label>
-          <input id="uOrg" />
+          <label>Organization</label>
+          <select id="uOrg"></select>
         </div>
         <div style="display:flex; align-items:flex-end; gap:6px;">
           <button id="createUserBtn">Create</button>
@@ -154,8 +157,8 @@
       </div>
       <div class="row">
         <div>
-          <label>Org ID (superAdmin)</label>
-          <input id="aOrg" />
+          <label>Organization</label>
+          <select id="aOrg"></select>
         </div>
         <div>
           <label>Client ID</label>
@@ -176,20 +179,6 @@
       <div class="list" id="appsList"></div>
     </div>
 
-    <div class="card" id="adminsCard" data-auth-section data-super-only style="display:none;">
-      <h3>Admin Users (superAdmin only)</h3>
-      <div class="row">
-        <div>
-          <label>Email</label>
-          <input id="adminEmail" />
-        </div>
-        <div style="display:flex; align-items:flex-end;">
-          <button id="addAdminBtn">Add Admin</button>
-        </div>
-      </div>
-      <div class="list" id="adminsList"></div>
-    </div>
-
     <div class="card" id="orgsCard" data-auth-section data-super-only style="display:none;">
       <h3>Organizations (superAdmin only)</h3>
       <div class="row">
@@ -205,6 +194,16 @@
       </div>
       <div class="list" id="orgsList"></div>
     </div>
+
+    <div class="card" id="consoleCard" data-auth-section data-super-only style="display:none;">
+      <div class="row" style="align-items:center;">
+        <h3 style="margin:0;">Console</h3>
+        <div style="display:flex; align-items:flex-end; justify-content:flex-end;">
+          <button id="clearConsoleBtn" class="secondary">Clear</button>
+        </div>
+      </div>
+      <div class="console" id="consoleLog"></div>
+    </div>
   </div>
 
   <script>
@@ -214,13 +213,13 @@
       isSuperAdmin: false,
       users: [],
       apps: [],
-      admins: [],
       orgs: [],
       selectedUserId: "",
       selectedAppId: "",
       selectedOrgId: "",
       userSearch: "",
-      appSearch: ""
+      appSearch: "",
+      consoleLines: []
     };
 
     function getToken() { return localStorage.getItem("admin_token") || ""; }
@@ -250,6 +249,7 @@
     }
 
     function setAuthVisible(isAuthed) {
+      document.getElementById("loginCard").style.display = isAuthed ? "none" : "block";
       document.querySelectorAll("[data-auth-section]").forEach(el => {
         if (!isAuthed) {
           el.style.display = "none";
@@ -270,26 +270,67 @@
       const isSuper = state.isSuperAdmin;
       uOrg.disabled = !isSuper;
       aOrg.disabled = !isSuper;
+      const orgOptions = ["<option value=''>Select organization</option>"].concat(
+        (state.orgs || []).map((org) => `<option value="${org.id}">${org.name}</option>`)
+      ).join("");
+      uOrg.innerHTML = orgOptions;
+      aOrg.innerHTML = orgOptions;
       if (!isSuper) {
         uOrg.value = "";
         aOrg.value = "";
-        uOrg.placeholder = "Assigned by your org";
-        aOrg.placeholder = "Assigned by your org";
-      } else {
-        uOrg.placeholder = "";
-        aOrg.placeholder = "";
       }
+    }
+
+    function logConsole(message, detail) {
+      const time = new Date().toISOString();
+      let line = `${time} ${message}`;
+      if (detail !== undefined) {
+        if (typeof detail === "string") {
+          line += `\n${detail}`;
+        } else {
+          line += `\n${JSON.stringify(detail, null, 2)}`;
+        }
+      }
+      state.consoleLines.unshift(line);
+      state.consoleLines = state.consoleLines.slice(0, 100);
+      renderConsole();
+    }
+
+    function renderConsole() {
+      const el = document.getElementById("consoleLog");
+      if (!el) return;
+      el.innerHTML = state.consoleLines.length
+        ? state.consoleLines.map((line) => `<div class="console-line">${escapeHtml(line)}</div>`).join("")
+        : "<div class='muted'>No console entries</div>";
+    }
+
+    function clearConsole() {
+      state.consoleLines = [];
+      renderConsole();
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
     }
 
     async function api(path, options) {
       const headers = { "Content-Type": "application/json" };
       const token = getToken();
       if (token) headers.Authorization = "Bearer " + token;
+      const method = (options && options.method) || "GET";
+      logConsole(`API ${method} ${path}`);
       const res = await fetch(path, { ...options, headers });
       const text = await res.text();
       let data = null;
       try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-      if (!res.ok) throw new Error((data && data.message) || (data && data.error_description) || text || res.status);
+      if (!res.ok) {
+        logConsole(`API ${method} ${path} failed`, data || text || res.status);
+        throw new Error((data && data.message) || (data && data.error_description) || text || res.status);
+      }
+      logConsole(`API ${method} ${path} succeeded`);
       return data;
     }
 
@@ -311,9 +352,11 @@
         setToken(token);
         applyScopes(token);
         document.getElementById("authStatus").textContent = "Signed in";
+        logConsole("Login succeeded", { scope: data.scope || "" });
         await refreshAll();
       } catch (e) {
         document.getElementById("loginError").textContent = String(e);
+        logConsole("Login failed", String(e));
       }
     }
 
@@ -322,22 +365,21 @@
       document.getElementById("authStatus").textContent = "Not signed in";
       setAuthVisible(false);
       syncOrgInputs();
+      logConsole("Logged out");
     }
 
     async function refreshAll() {
       state.users = await api("/admin/users");
       state.apps = await api("/admin/apps");
       if (state.isSuperAdmin) {
-        state.admins = await api("/admin/admins");
         state.orgs = await api("/admin/orgs");
       } else {
-        state.admins = [];
         state.orgs = [];
       }
       renderUsers();
       renderApps();
-      renderAdmins();
       renderOrgs();
+      syncOrgInputs();
     }
 
     function renderUsers() {
@@ -345,14 +387,18 @@
       const q = state.userSearch.trim().toLowerCase();
       const rows = (state.users || []).filter(u => {
         if (!q) return true;
-        return [u.email, u.status, u.firstName, u.lastName].join(" ").toLowerCase().includes(q);
+        return [u.email, u.status, u.firstName, u.lastName, u.orgName, u.isAdmin ? "admin" : "", u.isSuperAdmin ? "super admin" : ""].join(" ").toLowerCase().includes(q);
       });
       list.innerHTML = rows.map(u => {
         const selected = state.selectedUserId === u.id ? "selected" : "";
-        const adminTag = u.isAdmin ? "<span class='muted'>admin</span>" : "";
+        const tags = [];
+        if (u.isAdmin) tags.push("admin");
+        if (u.isSuperAdmin) tags.push("super admin");
+        const meta = [u.status, u.orgName].filter(Boolean).join(" | ");
+        const badge = tags.length ? `<span class='muted'>${tags.join(", ")}</span>` : "<span class='muted'></span>";
         return `<div class='item ${selected}' data-id='${u.id}'>` +
-          `<span>${u.email} (${u.status})</span>` +
-          `${adminTag}` +
+          `<span>${u.email}<span class='muted'>${meta ? " (" + meta + ")" : ""}</span></span>` +
+          `${badge}` +
           `</div>`;
       }).join("") || "<div class='item'>No users</div>";
       list.querySelectorAll("[data-id]").forEach(el => {
@@ -414,11 +460,11 @@
       const q = state.appSearch.trim().toLowerCase();
       const rows = (state.apps || []).filter(a => {
         if (!q) return true;
-        return [a.name, a.type].join(" ").toLowerCase().includes(q);
+        return [a.name, a.type, a.orgName].join(" ").toLowerCase().includes(q);
       });
       list.innerHTML = rows.map(a => {
         const selected = state.selectedAppId === a.id ? "selected" : "";
-        return `<div class='item ${selected}' data-id='${a.id}'>${a.name} (${a.type})</div>`;
+        return `<div class='item ${selected}' data-id='${a.id}'><span>${a.name} <span class='muted'>(${a.type}${a.orgName ? " | " + a.orgName : ""})</span></span></div>`;
       }).join("") || "<div class='item'>No apps</div>";
       list.querySelectorAll("[data-id]").forEach(el => {
         el.addEventListener("click", () => selectApp(el.getAttribute("data-id")));
@@ -471,21 +517,11 @@
       await refreshAll();
     }
 
-    function renderAdmins() {
-      const list = document.getElementById("adminsList");
-      list.innerHTML = (state.admins || []).map(a => {
-        return `<div class='item'><span>${a.email}</span><div class='inline-actions'><button class='danger' data-admin-id='${a.id}'>Remove</button></div></div>`;
-      }).join("") || "<div class='item'>No admins</div>";
-      list.querySelectorAll("[data-admin-id]").forEach(btn => {
-        btn.addEventListener("click", () => removeAdmin(btn.getAttribute("data-admin-id")));
-      });
-    }
-
     function renderOrgs() {
       const list = document.getElementById("orgsList");
       list.innerHTML = (state.orgs || []).map(o => {
         const selected = state.selectedOrgId === o.id ? "selected" : "";
-        return `<div class='item ${selected}' data-org-id='${o.id}'>${o.name}</div>`;
+        return `<div class='item ${selected}' data-org-id='${o.id}'><span>${o.name}</span><span class='muted'>${o.id}</span></div>`;
       }).join("") || "<div class='item'>No orgs</div>";
       list.querySelectorAll("[data-org-id]").forEach(el => {
         el.addEventListener("click", () => selectOrg(el.getAttribute("data-org-id")));
@@ -498,17 +534,6 @@
       state.selectedOrgId = id;
       document.getElementById("orgName").value = o.name || "";
       renderOrgs();
-    }
-
-    async function addAdmin() {
-      const email = document.getElementById("adminEmail").value.trim();
-      await api("/admin/admins", { method: "POST", body: JSON.stringify({ email }) });
-      await refreshAll();
-    }
-
-    async function removeAdmin(id) {
-      await api("/admin/admins/" + id, { method: "DELETE" });
-      await refreshAll();
     }
 
     async function addOrg() {
@@ -540,15 +565,16 @@
     document.getElementById("createAppBtn").addEventListener("click", createApp);
     document.getElementById("updateAppBtn").addEventListener("click", updateApp);
     document.getElementById("deleteAppBtn").addEventListener("click", deleteApp);
-    document.getElementById("addAdminBtn").addEventListener("click", addAdmin);
     document.getElementById("addOrgBtn").addEventListener("click", addOrg);
     document.getElementById("updateOrgBtn").addEventListener("click", updateOrg);
     document.getElementById("deleteOrgBtn").addEventListener("click", deleteOrg);
+    document.getElementById("clearConsoleBtn").addEventListener("click", clearConsole);
     document.getElementById("userSearch").addEventListener("input", (e) => { state.userSearch = e.target.value || ""; renderUsers(); });
     document.getElementById("appSearch").addEventListener("input", (e) => { state.appSearch = e.target.value || ""; renderApps(); });
 
     setAuthVisible(false);
     syncOrgInputs();
+    renderConsole();
     if (getToken()) {
       applyScopes(getToken());
       document.getElementById("authStatus").textContent = "Signed in";
