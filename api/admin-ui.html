@@ -60,7 +60,7 @@
       <div class="muted" id="loginError"></div>
     </div>
 
-    <div class="card">
+    <div class="card" data-auth-section>
       <h3>Users</h3>
       <label>Search</label>
       <input id="userSearch" placeholder="email, name, status" />
@@ -80,6 +80,12 @@
         <div>
           <label>Password</label>
           <input id="uPass" type="password" />
+        </div>
+        <div style="display:flex; align-items:flex-end; gap:8px;" id="uIsAdminWrap" data-super-only>
+          <label style="margin:0;">
+            <input id="uIsAdmin" type="checkbox" />
+            <span style="margin-left:6px;">Admin User</span>
+          </label>
         </div>
       </div>
       <div class="row">
@@ -106,7 +112,7 @@
       <div class="list" id="usersList"></div>
     </div>
 
-    <div class="card">
+    <div class="card" data-auth-section>
       <h3>Applications</h3>
       <label>Search</label>
       <input id="appSearch" placeholder="name, type" />
@@ -169,7 +175,7 @@
       <div class="list" id="appsList"></div>
     </div>
 
-    <div class="card" id="adminsCard">
+    <div class="card" id="adminsCard" data-auth-section data-super-only>
       <h3>Admin Users (superAdmin only)</h3>
       <div class="row">
         <div>
@@ -183,7 +189,7 @@
       <div class="list" id="adminsList"></div>
     </div>
 
-    <div class="card" id="orgsCard">
+    <div class="card" id="orgsCard" data-auth-section data-super-only>
       <h3>Organizations (superAdmin only)</h3>
       <div class="row">
         <div>
@@ -238,8 +244,40 @@
         : String(rawScope || "").split(/\s+/).map((s) => s.toLowerCase()).filter(Boolean);
       state.scopes = scopes;
       state.isSuperAdmin = scopes.includes("superadmin");
-      document.getElementById("adminsCard").style.display = state.isSuperAdmin ? "block" : "none";
-      document.getElementById("orgsCard").style.display = state.isSuperAdmin ? "block" : "none";
+      setAuthVisible(true);
+      syncOrgInputs();
+    }
+
+    function setAuthVisible(isAuthed) {
+      document.querySelectorAll("[data-auth-section]").forEach(el => {
+        if (!isAuthed) {
+          el.style.display = "none";
+          return;
+        }
+        const superOnly = el.hasAttribute("data-super-only");
+        if (superOnly && !state.isSuperAdmin) {
+          el.style.display = "none";
+        } else {
+          el.style.display = "block";
+        }
+      });
+    }
+
+    function syncOrgInputs() {
+      const uOrg = document.getElementById("uOrg");
+      const aOrg = document.getElementById("aOrg");
+      const isSuper = state.isSuperAdmin;
+      uOrg.disabled = !isSuper;
+      aOrg.disabled = !isSuper;
+      if (!isSuper) {
+        uOrg.value = "";
+        aOrg.value = "";
+        uOrg.placeholder = "Assigned by your org";
+        aOrg.placeholder = "Assigned by your org";
+      } else {
+        uOrg.placeholder = "";
+        aOrg.placeholder = "";
+      }
     }
 
     async function api(path, options) {
@@ -281,6 +319,8 @@
     function logout() {
       setToken("");
       document.getElementById("authStatus").textContent = "Not signed in";
+      setAuthVisible(false);
+      syncOrgInputs();
     }
 
     async function refreshAll() {
@@ -308,7 +348,11 @@
       });
       list.innerHTML = rows.map(u => {
         const selected = state.selectedUserId === u.id ? "selected" : "";
-        return `<div class='item ${selected}' data-id='${u.id}'>${u.email} (${u.status})</div>`;
+        const adminTag = u.isAdmin ? "<span class='muted'>admin</span>" : "";
+        return `<div class='item ${selected}' data-id='${u.id}'>` +
+          `<span>${u.email} (${u.status})</span>` +
+          `${adminTag}` +
+          `</div>`;
       }).join("") || "<div class='item'>No users</div>";
       list.querySelectorAll("[data-id]").forEach(el => {
         el.addEventListener("click", () => selectUser(el.getAttribute("data-id")));
@@ -324,6 +368,7 @@
       document.getElementById("uLast").value = u.lastName || "";
       document.getElementById("uStatus").value = u.status || "invited";
       document.getElementById("uOrg").value = u.orgId || "";
+      document.getElementById("uIsAdmin").checked = Boolean(u.isAdmin);
       renderUsers();
     }
 
@@ -334,7 +379,8 @@
         lastName: document.getElementById("uLast").value.trim() || undefined,
         status: document.getElementById("uStatus").value,
         password: document.getElementById("uPass").value || undefined,
-        orgId: document.getElementById("uOrg").value.trim() || undefined
+        orgId: document.getElementById("uOrg").value.trim() || undefined,
+        isAdmin: document.getElementById("uIsAdmin").checked
       };
       await api("/admin/users", { method: "POST", body: JSON.stringify(payload) });
       await refreshAll();
@@ -348,7 +394,8 @@
         lastName: document.getElementById("uLast").value.trim() || undefined,
         status: document.getElementById("uStatus").value,
         password: document.getElementById("uPass").value || undefined,
-        orgId: document.getElementById("uOrg").value.trim() || undefined
+        orgId: document.getElementById("uOrg").value.trim() || undefined,
+        isAdmin: document.getElementById("uIsAdmin").checked
       };
       await api("/admin/users/" + state.selectedUserId, { method: "PUT", body: JSON.stringify(payload) });
       await refreshAll();
@@ -499,6 +546,8 @@
     document.getElementById("userSearch").addEventListener("input", (e) => { state.userSearch = e.target.value || ""; renderUsers(); });
     document.getElementById("appSearch").addEventListener("input", (e) => { state.appSearch = e.target.value || ""; renderApps(); });
 
+    setAuthVisible(false);
+    syncOrgInputs();
     if (getToken()) {
       applyScopes(getToken());
       document.getElementById("authStatus").textContent = "Signed in";

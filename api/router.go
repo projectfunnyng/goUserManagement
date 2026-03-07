@@ -717,22 +717,40 @@ func verifyToken(token string) (jwt.MapClaims, error) {
 }
 
 func listUsers(w http.ResponseWriter, orgID string) {
-  const qBase = `select id, email, status, "firstName", "lastName", "orgId" from "User" where email <> 'admin@admin.com'`
+  const qBase = `
+    select u.id, u.email, u.status, u."firstName", u."lastName", u."orgId",
+           exists(
+             select 1
+             from "UserRole" ur
+             join "Role" r on r.id = ur."roleId"
+             where ur."userId" = u.id and r.name = 'user_admin'
+           ) as "isAdmin"
+    from "User" u
+    where u.email <> 'admin@admin.com'
+  `
   q := qBase
   args := []any{}
   if orgID != "" {
-    q += ` and "orgId" = $1`
+    q += ` and u."orgId" = $1`
     args = append(args, orgID)
   }
-  q += ` order by "createdAt" desc`
+  q += ` order by u."createdAt" desc`
   rows, err := dbPool.Query(context.Background(), q, args...)
   if err != nil { writeServerError(w, err); return }
   defer rows.Close()
-  type item struct { ID, Email, Status, FirstName, LastName, OrgID string }
+  type item struct {
+    ID        string `json:"id"`
+    Email     string `json:"email"`
+    Status    string `json:"status"`
+    FirstName string `json:"firstName"`
+    LastName  string `json:"lastName"`
+    OrgID     string `json:"orgId"`
+    IsAdmin   bool   `json:"isAdmin"`
+  }
   var out []item
   for rows.Next() {
     var it item
-    if err := rows.Scan(&it.ID, &it.Email, &it.Status, &it.FirstName, &it.LastName, &it.OrgID); err != nil { writeServerError(w, err); return }
+    if err := rows.Scan(&it.ID, &it.Email, &it.Status, &it.FirstName, &it.LastName, &it.OrgID, &it.IsAdmin); err != nil { writeServerError(w, err); return }
     out = append(out, it)
   }
   writeJSON(w, out, http.StatusOK)
@@ -751,6 +769,10 @@ func createUser(w http.ResponseWriter, r *http.Request, isSuper bool, orgID stri
   }
   if orgID == "" { writeError(w, "invalid_request", "orgId is required", http.StatusBadRequest); return }
   pass := fmt.Sprint(body["password"])
+  wantAdmin := false
+  if isSuper {
+    wantAdmin = parseBool(body["isAdmin"])
+  }
   var passHash any = nil
   if pass != "" {
     hash, err := argon2id.CreateHash(pass, argon2id.DefaultParams)
@@ -776,6 +798,9 @@ func createUser(w http.ResponseWriter, r *http.Request, isSuper bool, orgID stri
     OrgID     string `json:"orgId"`
   }
   if err := row.Scan(&resp.ID, &resp.Email, &resp.Status, &resp.FirstName, &resp.LastName, &resp.OrgID); err != nil { writeServerError(w, err); return }
+  if isSuper && wantAdmin {
+    if err := setUserAdmin(resp.ID, true); err != nil { writeServerError(w, err); return }
+  }
   writeJSON(w, resp, http.StatusOK)
 }
 
@@ -801,6 +826,10 @@ func updateUser(w http.ResponseWriter, r *http.Request, isSuper bool, orgID stri
   updateOrg := ""
   if isSuper {
     updateOrg = strings.TrimSpace(fmt.Sprint(body["orgId"]))
+  }
+  wantAdmin := false
+  if isSuper {
+    wantAdmin = parseBool(body["isAdmin"])
   }
 
   var passHash any = nil
@@ -836,6 +865,9 @@ func updateUser(w http.ResponseWriter, r *http.Request, isSuper bool, orgID stri
     writeServerError(w, err)
     return
   }
+  if isSuper {
+    if err := setUserAdmin(resp.ID, wantAdmin); err != nil { writeServerError(w, err); return }
+  }
   writeJSON(w, resp, http.StatusOK)
 }
 
@@ -856,8 +888,21 @@ func deleteUser(w http.ResponseWriter, r *http.Request, isSuper bool, orgID stri
   writeJSON(w, map[string]string{"id": userID}, http.StatusOK)
 }
 
+func setUserAdmin(userID string, makeAdmin bool) error {
+  var roleID string
+  if err := dbPool.QueryRow(context.Background(), `select id from "Role" where name = 'user_admin'`).Scan(&roleID); err != nil {
+    return err
+  }
+  if makeAdmin {
+    _, err := dbPool.Exec(context.Background(), `insert into "UserRole" ("userId","roleId") values ($1,$2) on conflict do nothing`, userID, roleID)
+    return err
+  }
+  _, err := dbPool.Exec(context.Background(), `delete from "UserRole" where "userId" = $1 and "roleId" = $2`, userID, roleID)
+  return err
+}
+
 func listApps(w http.ResponseWriter, orgID string) {
-  const qBase = `select id, name, type, enabled from "Application"`
+  const qBase = `select id, name, type, enabled, "orgId" from "Application"`
   q := qBase
   args := []any{}
   if orgID != "" {
@@ -868,11 +913,17 @@ func listApps(w http.ResponseWriter, orgID string) {
   rows, err := dbPool.Query(context.Background(), q, args...)
   if err != nil { writeServerError(w, err); return }
   defer rows.Close()
-  type item struct { ID, Name, Type string; Enabled bool }
+  type item struct {
+    ID      string `json:"id"`
+    Name    string `json:"name"`
+    Type    string `json:"type"`
+    Enabled bool   `json:"enabled"`
+    OrgID   string `json:"orgId"`
+  }
   var out []item
   for rows.Next() {
     var it item
-    if err := rows.Scan(&it.ID, &it.Name, &it.Type, &it.Enabled); err != nil { writeServerError(w, err); return }
+    if err := rows.Scan(&it.ID, &it.Name, &it.Type, &it.Enabled, &it.OrgID); err != nil { writeServerError(w, err); return }
     out = append(out, it)
   }
   writeJSON(w, out, http.StatusOK)
@@ -1025,7 +1076,10 @@ func listAdmins(w http.ResponseWriter) {
   rows, err := dbPool.Query(context.Background(), q)
   if err != nil { writeServerError(w, err); return }
   defer rows.Close()
-  type item struct { ID, Email string }
+  type item struct {
+    ID    string `json:"id"`
+    Email string `json:"email"`
+  }
   var out []item
   for rows.Next() { var it item; if err := rows.Scan(&it.ID, &it.Email); err != nil { writeServerError(w, err); return }; out = append(out, it) }
   writeJSON(w, out, http.StatusOK)
@@ -1064,7 +1118,10 @@ func listOrgs(w http.ResponseWriter) {
   rows, err := dbPool.Query(context.Background(), q)
   if err != nil { writeServerError(w, err); return }
   defer rows.Close()
-  type item struct { ID, Name string }
+  type item struct {
+    ID   string `json:"id"`
+    Name string `json:"name"`
+  }
   var out []item
   for rows.Next() { var it item; if err := rows.Scan(&it.ID, &it.Name); err != nil { writeServerError(w, err); return }; out = append(out, it) }
   writeJSON(w, out, http.StatusOK)
@@ -1188,6 +1245,18 @@ func contains(list []string, value string) bool {
     }
   }
   return false
+}
+
+func parseBool(v any) bool {
+  switch t := v.(type) {
+  case bool:
+    return t
+  case string:
+    s := strings.ToLower(strings.TrimSpace(t))
+    return s == "true" || s == "1" || s == "yes" || s == "y"
+  default:
+    return false
+  }
 }
 
 
