@@ -21,6 +21,7 @@
     .item.selected { background: #e5e7eb; }
     .muted { color: #6b7280; font-size: 12px; }
     .inline-actions { display: flex; gap: 6px; }
+    [data-auth-section] { display: none; }
   </style>
 </head>
 <body>
@@ -60,7 +61,7 @@
       <div class="muted" id="loginError"></div>
     </div>
 
-    <div class="card" data-auth-section>
+    <div class="card" data-auth-section style="display:none;">
       <h3>Users</h3>
       <label>Search</label>
       <input id="userSearch" placeholder="email, name, status" />
@@ -112,7 +113,7 @@
       <div class="list" id="usersList"></div>
     </div>
 
-    <div class="card" data-auth-section>
+    <div class="card" data-auth-section style="display:none;">
       <h3>Applications</h3>
       <label>Search</label>
       <input id="appSearch" placeholder="name, type" />
@@ -175,7 +176,7 @@
       <div class="list" id="appsList"></div>
     </div>
 
-    <div class="card" id="adminsCard" data-auth-section data-super-only>
+    <div class="card" id="adminsCard" data-auth-section data-super-only style="display:none;">
       <h3>Admin Users (superAdmin only)</h3>
       <div class="row">
         <div>
@@ -189,7 +190,7 @@
       <div class="list" id="adminsList"></div>
     </div>
 
-    <div class="card" id="orgsCard" data-auth-section data-super-only>
+    <div class="card" id="orgsCard" data-auth-section data-super-only style="display:none;">
       <h3>Organizations (superAdmin only)</h3>
       <div class="row">
         <div>
