@@ -273,6 +273,53 @@
       refreshOrgForm();
     }
 
+    function asArray(value) {
+      if (Array.isArray(value)) return value;
+      if (value && Array.isArray(value.items)) return value.items;
+      if (value && Array.isArray(value.data)) return value.data;
+      return [];
+    }
+
+    function normalizeUser(user) {
+      return {
+        id: String((user && user.id) || ""),
+        email: String((user && user.email) || ""),
+        status: String((user && user.status) || ""),
+        firstName: String((user && user.firstName) || ""),
+        lastName: String((user && user.lastName) || ""),
+        orgId: String((user && user.orgId) || ""),
+        orgName: String((user && user.orgName) || ""),
+        isAdmin: Boolean(user && user.isAdmin),
+        isSuperAdmin: Boolean(user && user.isSuperAdmin)
+      };
+    }
+
+    function normalizeApp(app) {
+      return {
+        id: String((app && app.id) || ""),
+        name: String((app && app.name) || ""),
+        type: String((app && app.type) || ""),
+        enabled: Boolean(app && app.enabled),
+        orgId: String((app && app.orgId) || ""),
+        orgName: String((app && app.orgName) || ""),
+        clientId: String((app && app.clientId) || "")
+      };
+    }
+
+    function isHiddenApp(app) {
+      const id = String((app && app.id) || "").trim().toLowerCase();
+      const name = String((app && app.name) || "").trim().toLowerCase();
+      const clientId = String((app && app.clientId) || "").trim().toLowerCase();
+      return id === "app_admin_console" || name === "admin_console" || clientId === "admin_console";
+    }
+
+    function normalizeOrg(org) {
+      return {
+        id: String((org && org.id) || ""),
+        name: String((org && org.name) || "")
+      };
+    }
+
     function setAuthVisible(isAuthed) {
       document.getElementById("loginCard").style.display = isAuthed ? "none" : "block";
       document.getElementById("sessionCard").style.display = isAuthed ? "block" : "none";
@@ -465,21 +512,30 @@
       const [usersResult, appsResult, orgsResult] = await Promise.allSettled(requests);
 
       if (usersResult.status === "fulfilled") {
-        state.users = Array.isArray(usersResult.value) ? usersResult.value : [];
+        state.users = asArray(usersResult.value)
+          .map(normalizeUser)
+          .filter((user) => user.id && user.email)
+          .sort((a, b) => a.email.localeCompare(b.email));
       } else {
         state.users = [];
         logConsole("Users refresh failed", String(usersResult.reason));
       }
 
       if (appsResult.status === "fulfilled") {
-        state.apps = Array.isArray(appsResult.value) ? appsResult.value : [];
+        state.apps = asArray(appsResult.value)
+          .map(normalizeApp)
+          .filter((app) => app.id && app.name && !isHiddenApp(app))
+          .sort((a, b) => a.name.localeCompare(b.name));
       } else {
         state.apps = [];
         logConsole("Apps refresh failed", String(appsResult.reason));
       }
 
       if (orgsResult.status === "fulfilled") {
-        state.orgs = Array.isArray(orgsResult.value) ? orgsResult.value : [];
+        state.orgs = asArray(orgsResult.value)
+          .map(normalizeOrg)
+          .filter((org) => org.id && org.name)
+          .sort((a, b) => a.name.localeCompare(b.name));
       } else {
         state.orgs = [];
         logConsole("Orgs refresh failed", String(orgsResult.reason));
@@ -601,12 +657,14 @@
         orgId: document.getElementById("uOrg").value.trim() || undefined,
         isAdmin: document.getElementById("uIsAdmin").checked
       };
-      await api("/admin/users", { method: "POST", body: JSON.stringify(payload) });
+      const res = await api("/admin/users", { method: "POST", body: JSON.stringify(payload) });
+      if (res && res.id) state.selectedUserId = String(res.id);
       await refreshAll();
     }
 
     async function updateUser() {
       if (!state.selectedUserId) return;
+      const selectedId = state.selectedUserId;
       const payload = {
         email: document.getElementById("uEmail").value.trim(),
         firstName: document.getElementById("uFirst").value.trim() || undefined,
@@ -616,7 +674,8 @@
         orgId: document.getElementById("uOrg").value.trim() || undefined,
         isAdmin: document.getElementById("uIsAdmin").checked
       };
-      await api("/admin/users/" + state.selectedUserId, { method: "PUT", body: JSON.stringify(payload) });
+      await api("/admin/users/" + selectedId, { method: "PUT", body: JSON.stringify(payload) });
+      state.selectedUserId = selectedId;
       await refreshAll();
     }
 
@@ -665,18 +724,21 @@
       const res = await api("/admin/apps", { method: "POST", body: JSON.stringify(payload) });
       document.getElementById("aClientId").value = res.client_id || "";
       document.getElementById("aClientSecret").value = res.client_secret || "";
+      if (res && res.id) state.selectedAppId = String(res.id);
       await refreshAll();
     }
 
     async function updateApp() {
       if (!state.selectedAppId) return;
+      const selectedId = state.selectedAppId;
       const payload = {
         name: document.getElementById("aName").value.trim(),
         type: document.getElementById("aType").value,
         enabled: document.getElementById("aEnabled").value === "true",
         orgId: document.getElementById("aOrg").value.trim() || undefined
       };
-      await api("/admin/apps/" + state.selectedAppId, { method: "PUT", body: JSON.stringify(payload) });
+      await api("/admin/apps/" + selectedId, { method: "PUT", body: JSON.stringify(payload) });
+      state.selectedAppId = selectedId;
       await refreshAll();
     }
 

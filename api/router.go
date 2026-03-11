@@ -993,16 +993,23 @@ func ensureRole(name, description string) (string, error) {
 }
 
 func listApps(w http.ResponseWriter, orgID string) {
-  const qBase = `
-    select a.id, a.name, a.type, a.enabled, a."orgId",
-           case
-             when lower(trim(coalesce(o.name, ''))) in ('default', 'default org') then ''
-             else coalesce(o.name, '')
-           end
-    from "Application" a
-    left join "Organization" o on o.id = a."orgId"
-    where lower(trim(a.name)) <> 'admin_console'
-  `
+	const qBase = `
+	  select a.id, a.name, a.type, a.enabled, a."orgId",
+	         case
+	           when lower(trim(coalesce(o.name, ''))) in ('default', 'default org') then ''
+	           else coalesce(o.name, '')
+	         end
+	  from "Application" a
+	  left join "Organization" o on o.id = a."orgId"
+	  where lower(trim(a.name)) <> 'admin_console'
+	    and lower(trim(a.id)) <> 'app_admin_console'
+	    and not exists (
+	      select 1
+	      from "OAuthClient" oc
+	      where oc."applicationId" = a.id
+	        and lower(trim(oc."clientId")) = 'admin_console'
+	    )
+	`
   q := qBase
   args := []any{}
   if orgID != "" {
