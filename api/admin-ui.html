@@ -280,9 +280,7 @@
       uOrg.disabled = !isSuper;
       aOrg.disabled = !isSuper;
       const orgs = availableOrgs();
-      const orgOptions = ["<option value=''>Select organization</option>"].concat(
-        orgs.map((org) => `<option value="${escapeAttr(org.id)}">${escapeHtml(org.name || org.id)}</option>`)
-      ).join("");
+      const orgOptions = orgs.map((org) => `<option value="${escapeAttr(org.id)}">${escapeHtml(org.name || org.id)}</option>`).join("");
       uOrg.innerHTML = orgOptions;
       aOrg.innerHTML = orgOptions;
       if (!isSuper) {
@@ -421,10 +419,66 @@
       } else {
         state.orgs = [];
       }
+      reconcileSelections();
+      syncOrgInputs();
+      refreshUserForm();
+      refreshAppForm();
+      refreshOrgForm();
       renderUsers();
       renderApps();
       renderOrgs();
-      syncOrgInputs();
+    }
+
+    function reconcileSelections() {
+      if (state.selectedUserId && !state.users.some((u) => u.id === state.selectedUserId)) {
+        state.selectedUserId = "";
+      }
+      if (state.selectedAppId && !state.apps.some((a) => a.id === state.selectedAppId)) {
+        state.selectedAppId = "";
+      }
+      if (state.selectedOrgId && !state.orgs.some((o) => o.id === state.selectedOrgId)) {
+        state.selectedOrgId = "";
+      }
+    }
+
+    function refreshUserForm() {
+      const selected = state.selectedUserId ? state.users.find((u) => u.id === state.selectedUserId) : null;
+      if (!selected) {
+        document.getElementById("uEmail").value = "";
+        document.getElementById("uFirst").value = "";
+        document.getElementById("uLast").value = "";
+        document.getElementById("uPass").value = "";
+        document.getElementById("uStatus").value = "invited";
+        document.getElementById("uOrg").value = "";
+        document.getElementById("uIsAdmin").checked = false;
+        return;
+      }
+      document.getElementById("uEmail").value = selected.email || "";
+      document.getElementById("uFirst").value = selected.firstName || "";
+      document.getElementById("uLast").value = selected.lastName || "";
+      document.getElementById("uStatus").value = selected.status || "invited";
+      document.getElementById("uOrg").value = selected.orgId || "";
+      document.getElementById("uIsAdmin").checked = Boolean(selected.isAdmin);
+    }
+
+    function refreshAppForm() {
+      const selected = state.selectedAppId ? state.apps.find((a) => a.id === state.selectedAppId) : null;
+      if (!selected) {
+        document.getElementById("aName").value = "";
+        document.getElementById("aType").value = "internal";
+        document.getElementById("aEnabled").value = "true";
+        document.getElementById("aOrg").value = "";
+        return;
+      }
+      document.getElementById("aName").value = selected.name || "";
+      document.getElementById("aType").value = selected.type || "internal";
+      document.getElementById("aEnabled").value = String(Boolean(selected.enabled));
+      document.getElementById("aOrg").value = selected.orgId || "";
+    }
+
+    function refreshOrgForm() {
+      const selected = state.selectedOrgId ? state.orgs.find((o) => o.id === state.selectedOrgId) : null;
+      document.getElementById("orgName").value = selected ? (selected.name || "") : "";
     }
 
     function renderUsers() {
@@ -455,13 +509,8 @@
       const u = state.users.find(x => x.id === id);
       if (!u) return;
       state.selectedUserId = id;
-      document.getElementById("uEmail").value = u.email || "";
-      document.getElementById("uFirst").value = u.firstName || "";
-      document.getElementById("uLast").value = u.lastName || "";
-      document.getElementById("uStatus").value = u.status || "invited";
-      document.getElementById("uOrg").value = u.orgId || "";
-      document.getElementById("uIsAdmin").checked = Boolean(u.isAdmin);
       syncOrgInputs();
+      refreshUserForm();
       renderUsers();
     }
 
@@ -521,11 +570,8 @@
       const a = state.apps.find(x => x.id === id);
       if (!a) return;
       state.selectedAppId = id;
-      document.getElementById("aName").value = a.name || "";
-      document.getElementById("aType").value = a.type || "internal";
-      document.getElementById("aEnabled").value = String(Boolean(a.enabled));
-      document.getElementById("aOrg").value = a.orgId || "";
       syncOrgInputs();
+      refreshAppForm();
       renderApps();
     }
 
@@ -579,7 +625,7 @@
       const o = state.orgs.find(x => x.id === id);
       if (!o) return;
       state.selectedOrgId = id;
-      document.getElementById("orgName").value = o.name || "";
+      refreshOrgForm();
       renderOrgs();
     }
 
