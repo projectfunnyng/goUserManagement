@@ -292,13 +292,17 @@
     function availableOrgs() {
       const map = new Map();
       (state.orgs || []).forEach((org) => {
-        if (org && org.id) map.set(org.id, { id: org.id, name: org.name || org.id });
+        if (org && org.id && String(org.name || "").toLowerCase() !== "default") map.set(org.id, { id: org.id, name: org.name || org.id });
       });
       (state.users || []).forEach((user) => {
-        if (user && user.orgId) map.set(user.orgId, { id: user.orgId, name: user.orgName || user.orgId });
+        if (user && user.orgId && String(user.orgName || "").toLowerCase() !== "default") {
+          map.set(user.orgId, { id: user.orgId, name: user.orgName || user.orgId });
+        }
       });
       (state.apps || []).forEach((app) => {
-        if (app && app.orgId) map.set(app.orgId, { id: app.orgId, name: app.orgName || app.orgId });
+        if (app && app.orgId && String(app.orgName || "").toLowerCase() !== "default") {
+          map.set(app.orgId, { id: app.orgId, name: app.orgName || app.orgId });
+        }
       });
       return Array.from(map.values());
     }
@@ -412,13 +416,34 @@
     }
 
     async function refreshAll() {
-      state.users = await api("/admin/users");
-      state.apps = await api("/admin/apps");
-      if (state.isSuperAdmin) {
-        state.orgs = await api("/admin/orgs");
+      const requests = [
+        api("/admin/users"),
+        api("/admin/apps"),
+        state.isSuperAdmin ? api("/admin/orgs") : Promise.resolve([])
+      ];
+      const [usersResult, appsResult, orgsResult] = await Promise.allSettled(requests);
+
+      if (usersResult.status === "fulfilled") {
+        state.users = usersResult.value;
+      } else {
+        state.users = [];
+        logConsole("Users refresh failed", String(usersResult.reason));
+      }
+
+      if (appsResult.status === "fulfilled") {
+        state.apps = appsResult.value;
+      } else {
+        state.apps = [];
+        logConsole("Apps refresh failed", String(appsResult.reason));
+      }
+
+      if (orgsResult.status === "fulfilled") {
+        state.orgs = orgsResult.value;
       } else {
         state.orgs = [];
+        logConsole("Orgs refresh failed", String(orgsResult.reason));
       }
+
       reconcileSelections();
       syncOrgInputs();
       refreshUserForm();
@@ -672,7 +697,9 @@
       applyScopes(getToken());
       document.getElementById("authStatus").textContent = "Signed in";
       document.getElementById("sessionStatus").textContent = "Signed in";
-      refreshAll();
+      refreshAll().catch((error) => {
+        logConsole("Initial refresh failed", String(error));
+      });
     }
   </script>
 </body>

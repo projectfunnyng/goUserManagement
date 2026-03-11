@@ -993,11 +993,12 @@ func listApps(w http.ResponseWriter, orgID string) {
     select a.id, a.name, a.type, a.enabled, a."orgId", coalesce(o.name, '')
     from "Application" a
     left join "Organization" o on o.id = a."orgId"
+    where lower(a.name) <> 'admin_console'
   `
   q := qBase
   args := []any{}
   if orgID != "" {
-    q += ` where a."orgId" = $1`
+    q += ` and a."orgId" = $1`
     args = append(args, orgID)
   }
   q += ` order by a."createdAt" desc`
@@ -1207,7 +1208,7 @@ func removeAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 func listOrgs(w http.ResponseWriter) {
-  const q = `select id, name from "Organization" order by "createdAt" desc`
+  const q = `select id, name from "Organization" where lower(name) <> 'default' order by "createdAt" desc`
   rows, err := dbPool.Query(context.Background(), q)
   if err != nil { writeServerError(w, err); return }
   defer rows.Close()
