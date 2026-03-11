@@ -256,6 +256,23 @@
       syncOrgInputs();
     }
 
+    function resetAdminState() {
+      state.scopes = [];
+      state.isSuperAdmin = false;
+      state.users = [];
+      state.apps = [];
+      state.orgs = [];
+      state.selectedUserId = "";
+      state.selectedAppId = "";
+      state.selectedOrgId = "";
+      renderUsers();
+      renderApps();
+      renderOrgs();
+      refreshUserForm();
+      refreshAppForm();
+      refreshOrgForm();
+    }
+
     function setAuthVisible(isAuthed) {
       document.getElementById("loginCard").style.display = isAuthed ? "none" : "block";
       document.getElementById("sessionCard").style.display = isAuthed ? "block" : "none";
@@ -292,19 +309,30 @@
     function availableOrgs() {
       const map = new Map();
       (state.orgs || []).forEach((org) => {
-        if (org && org.id && String(org.name || "").toLowerCase() !== "default") map.set(org.id, { id: org.id, name: org.name || org.id });
+        if (org && org.id && !isHiddenOrg(org)) map.set(org.id, { id: org.id, name: org.name || org.id });
       });
       (state.users || []).forEach((user) => {
-        if (user && user.orgId && String(user.orgName || "").toLowerCase() !== "default") {
+        if (user && user.orgId && !isHiddenOrg({ id: user.orgId, name: user.orgName })) {
           map.set(user.orgId, { id: user.orgId, name: user.orgName || user.orgId });
         }
       });
       (state.apps || []).forEach((app) => {
-        if (app && app.orgId && String(app.orgName || "").toLowerCase() !== "default") {
+        if (app && app.orgId && !isHiddenOrg({ id: app.orgId, name: app.orgName })) {
           map.set(app.orgId, { id: app.orgId, name: app.orgName || app.orgId });
         }
       });
       return Array.from(map.values());
+    }
+
+    function isHiddenOrg(org) {
+      const id = String((org && org.id) || "").trim().toLowerCase();
+      if (id === "default") return true;
+      return isHiddenOrgName(org && org.name);
+    }
+
+    function isHiddenOrgName(name) {
+      const normalized = String(name || "").trim().toLowerCase();
+      return normalized === "default" || normalized === "default org";
     }
 
     function ensureSelectedOrgOption(selectEl, orgId) {
@@ -373,6 +401,10 @@
       try { data = text ? JSON.parse(text) : null; } catch { data = text; }
       if (!res.ok) {
         logConsole(`API ${method} ${path} failed`, data || text || res.status);
+        if (res.status === 401) {
+          logout();
+          throw new Error("Session expired or not authorized. Please sign in.");
+        }
         throw new Error((data && data.message) || (data && data.error_description) || text || res.status);
       }
       logConsole(`API ${method} ${path} succeeded`);
@@ -408,6 +440,7 @@
 
     function logout() {
       setToken("");
+      resetAdminState();
       document.getElementById("authStatus").textContent = "Not signed in";
       document.getElementById("sessionStatus").textContent = "Not signed in";
       setAuthVisible(false);
@@ -416,6 +449,14 @@
     }
 
     async function refreshAll() {
+      const token = getToken();
+      if (!token) {
+        resetAdminState();
+        setAuthVisible(false);
+        syncOrgInputs();
+        return;
+      }
+      setAuthVisible(true);
       const requests = [
         api("/admin/users"),
         api("/admin/apps"),
@@ -424,21 +465,21 @@
       const [usersResult, appsResult, orgsResult] = await Promise.allSettled(requests);
 
       if (usersResult.status === "fulfilled") {
-        state.users = usersResult.value;
+        state.users = Array.isArray(usersResult.value) ? usersResult.value : [];
       } else {
         state.users = [];
         logConsole("Users refresh failed", String(usersResult.reason));
       }
 
       if (appsResult.status === "fulfilled") {
-        state.apps = appsResult.value;
+        state.apps = Array.isArray(appsResult.value) ? appsResult.value : [];
       } else {
         state.apps = [];
         logConsole("Apps refresh failed", String(appsResult.reason));
       }
 
       if (orgsResult.status === "fulfilled") {
-        state.orgs = orgsResult.value;
+        state.orgs = Array.isArray(orgsResult.value) ? orgsResult.value : [];
       } else {
         state.orgs = [];
         logConsole("Orgs refresh failed", String(orgsResult.reason));
@@ -452,6 +493,17 @@
       renderUsers();
       renderApps();
       renderOrgs();
+    }
+
+    async function handleRefresh() {
+      try {
+        await refreshAll();
+      } catch (error) {
+        logConsole("Refresh failed", String(error));
+        if (/unauthorized|invalid access token|session expired/i.test(String(error))) {
+          logout();
+        }
+      }
     }
 
     function reconcileSelections() {
@@ -676,7 +728,7 @@
 
     document.getElementById("loginBtn").addEventListener("click", login);
     document.getElementById("logoutBtn").addEventListener("click", logout);
-    document.getElementById("refreshBtn").addEventListener("click", refreshAll);
+    document.getElementById("refreshBtn").addEventListener("click", handleRefresh);
     document.getElementById("createUserBtn").addEventListener("click", createUser);
     document.getElementById("updateUserBtn").addEventListener("click", updateUser);
     document.getElementById("deleteUserBtn").addEventListener("click", deleteUser);
@@ -697,7 +749,7 @@
       applyScopes(getToken());
       document.getElementById("authStatus").textContent = "Signed in";
       document.getElementById("sessionStatus").textContent = "Signed in";
-      refreshAll().catch((error) => {
+      handleRefresh().catch((error) => {
         logConsole("Initial refresh failed", String(error));
       });
     }

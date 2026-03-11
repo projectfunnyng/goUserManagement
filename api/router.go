@@ -758,7 +758,11 @@ func verifyToken(token string) (jwt.MapClaims, error) {
 
 func listUsers(w http.ResponseWriter, orgID string) {
   const qBase = `
-    select u.id, u.email, u.status, u."firstName", u."lastName", u."orgId", coalesce(o.name, ''),
+    select u.id, u.email, u.status, u."firstName", u."lastName", u."orgId",
+           case
+             when lower(trim(coalesce(o.name, ''))) in ('default', 'default org') then ''
+             else coalesce(o.name, '')
+           end,
            exists(
              select 1
              from "UserRole" ur
@@ -990,10 +994,14 @@ func ensureRole(name, description string) (string, error) {
 
 func listApps(w http.ResponseWriter, orgID string) {
   const qBase = `
-    select a.id, a.name, a.type, a.enabled, a."orgId", coalesce(o.name, '')
+    select a.id, a.name, a.type, a.enabled, a."orgId",
+           case
+             when lower(trim(coalesce(o.name, ''))) in ('default', 'default org') then ''
+             else coalesce(o.name, '')
+           end
     from "Application" a
     left join "Organization" o on o.id = a."orgId"
-    where lower(a.name) <> 'admin_console'
+    where lower(trim(a.name)) <> 'admin_console'
   `
   q := qBase
   args := []any{}
@@ -1208,7 +1216,7 @@ func removeAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 func listOrgs(w http.ResponseWriter) {
-  const q = `select id, name from "Organization" where lower(name) <> 'default' order by "createdAt" desc`
+  const q = `select id, name from "Organization" where lower(trim(name)) not in ('default', 'default org') and lower(trim(id)) <> 'default' order by "createdAt" desc`
   rows, err := dbPool.Query(context.Background(), q)
   if err != nil { writeServerError(w, err); return }
   defer rows.Close()
